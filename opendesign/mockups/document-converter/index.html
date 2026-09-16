@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Doc Converter — Convert & protect</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <a class="brand" href="index.html"><span class="brandmark" aria-hidden="true">d.</span>Doc Converter<span class="brand-divider"></span><span class="brand-description">Your documents. Your control.</span></a>
+      <span class="prototype">Interactive design preview</span>
+    </header>
+    <main>
+      <div class="intro"><div><p class="eyebrow">DOCUMENT WORKSPACE</p><h1>A new format. The same privacy.</h1><p>Convert your documents, protect sensitive files, or unlock an encrypted copy.</p></div><span class="local-badge"><span></span>Designed for local processing</span></div>
+      <nav class="modes" aria-label="Document operation"><button class="active" data-mode="convert" aria-pressed="true"><span aria-hidden="true">↔</span> Convert</button><button data-mode="images" aria-pressed="false"><span aria-hidden="true">▧</span> Images</button><button data-mode="encrypt" aria-pressed="false"><span aria-hidden="true">◇</span> Encrypt</button><button data-mode="decrypt" aria-pressed="false"><span aria-hidden="true">↳</span> Decrypt</button></nav>
+      <div class="workspace">
+        <div class="left-column">
+        <section class="queue" aria-labelledby="queue-title">
+          <div class="section-head"><div><h2 id="queue-title">Your files <span id="count" class="count">4</span></h2><p id="queue-description">Choose an output format for each document.</p></div><button class="secondary" id="add-files"><span aria-hidden="true">＋</span> Add files</button><input type="file" id="file-input" multiple hidden></div>
+          <div class="queue-tools"><label><input type="checkbox" id="select-all" checked> <span id="selection-count">4 selected</span></label><button class="text-button" id="clear">Clear all</button></div>
+          <div class="table-scroll"><table><thead><tr><th scope="col"><span class="sr-only">Selected</span></th><th scope="col">DOCUMENT</th><th scope="col" id="output-heading">OUTPUT</th><th scope="col">STATUS</th><th scope="col"><span class="sr-only">Remove</span></th></tr></thead><tbody id="files"></tbody></table></div>
+          <button class="dropzone" id="dropzone"><span class="drop-symbol" aria-hidden="true">＋</span><strong id="drop-title">Drop documents here</strong><span>or click to browse your computer</span><small id="drop-types">PDF, Word, Excel, PowerPoint, text & more</small></button>
+          <div class="queue-bottom"><span>Original files are kept</span><button class="text-button" id="samples">Load example files</button></div>
+        </section>
+        <section id="layout-preview" class="layout-preview" aria-labelledby="preview-title">
+          <div class="section-head"><div><p class="eyebrow">REVIEW BEFORE EXPORT</p><h2 id="preview-title">Page layout</h2><p>Adjust the breathing room. Keep related content together.</p></div><span class="count">Sample content</span></div>
+          <div class="preview-toolbar"><label>Preview document<select id="preview-file" aria-label="Preview document"></select></label><span id="page-count" aria-live="polite"></span></div>
+          <div id="merge-order" hidden><p class="field-label">Document order</p><div id="order-list"></div></div>
+          <div class="page-controls"><label>Margins<select id="margins"><option value="normal">Normal · 20 mm</option><option value="narrow">Narrow · 10 mm</option><option value="wide">Wide · 30 mm</option></select></label><label>Paragraph spacing<select id="spacing"><option value="compact">Compact</option><option value="comfortable" selected>Comfortable</option><option value="spacious">Spacious</option></select></label></div>
+          <div class="break-toolbar"><p id="block-selection" aria-live="polite">Select a content block on the page.</p><button class="secondary" id="page-break" disabled>Move to next page</button><button class="text-button" id="reset-breaks">Reset page breaks</button></div>
+          <div class="pages" id="pages"></div>
+          <p class="hint">Layout demonstration with sample text, not a rendering of your files. Page breaks move a block and the content after it.</p>
+        </section>
+        </div>
+        <aside class="settings" aria-labelledby="settings-title">
+          <div class="settings-heading"><span class="step">02</span><div><h2 id="settings-title">Output settings</h2><p id="settings-subtitle">Make these files work for you.</p></div></div>
+          <div class="settings-body">
+            <div id="convert-settings"><label class="field-label" for="batch-format">Convert selected files to</label><select id="batch-format"><option>PDF</option><option>DOCX</option><option>TXT</option><option>HTML</option><option>MD</option></select><p class="hint">You can also change each file in the list.</p><div class="separator"></div><label class="switch-row"><span><strong>Password-protect PDFs</strong><small>Require a password to open</small></span><input id="protect" type="checkbox" role="switch"></label><p id="pdf-note" class="hint">Applies only to files with PDF output.</p></div>
+            <div id="image-settings" hidden><label class="field-label" for="image-format">Image output format</label><select id="image-format"><option>PNG</option><option>JPG</option><option>WEBP</option><option>PDF</option></select><p class="hint">Convert JPG, PNG, WebP, TIFF and BMP images.</p><div class="separator"></div><label class="field-label" for="image-quality">Image quality <output id="quality-value">85%</output></label><input type="range" id="image-quality" min="10" max="100" value="85"><p class="hint" id="quality-note">PNG preserves image quality; quality adjustment is available for JPG and WebP.</p><label class="field-label image-size-label" for="image-size">Resize</label><select id="image-size"><option>Original dimensions</option><option>Fit within 1920 × 1920</option><option>Fit within 1280 × 1280</option><option>Fit within 640 × 640</option></select><p class="hint">Keep the original aspect ratio. Smaller images are not enlarged.</p><p class="hint" id="transparency-note">PNG keeps transparency.</p></div>
+            <div id="document-layout"><div class="separator"></div><label class="switch-row"><span><strong>Combine into one document</strong><small>Merge selected files into a single PDF</small></span><input id="merge" type="checkbox" role="switch"></label><div id="merge-name-field" hidden><label class="field-label" for="merge-name">Output filename</label><input id="merge-name" type="text" value="Combined documents.pdf"><p class="hint">Use the arrows in Page layout to set the order.</p></div><div class="separator"></div><span class="field-label">Page orientation</span><div class="orientation" role="group" aria-label="Page orientation"><button data-orientation="portrait" class="active" aria-pressed="true"><span class="paper-icon"></span>Portrait</button><button data-orientation="landscape" aria-pressed="false"><span class="paper-icon landscape"></span>Landscape</button></div><p class="hint">Applies to PDF and Word output. Review margins and page breaks in Page layout.</p></div>
+            <div id="encrypt-settings" hidden><span class="field-label">Protection type</span><label class="choice"><input type="radio" name="encryption-type" value="pdf" checked><span><strong>Password-protected PDF</strong><small>Open with a password in a PDF reader.</small></span></label><label class="choice"><input type="radio" name="encryption-type" value="file"><span><strong>Encrypted file</strong><small>Protect any file. Decrypt here to restore it.</small></span></label><p class="hint" id="encryption-note">PDF files only. Convert other documents to PDF first.</p><div class="separator"></div></div>
+            <div id="decrypt-settings" hidden><div class="info"><strong>Unlock your documents</strong><p>Add a protected PDF or an encrypted .dcenc file, then enter its password.</p></div><div class="separator"></div></div>
+            <div id="password-settings" hidden><label class="field-label" for="password" id="password-label">Create a password</label><div class="password-field"><input type="password" id="password" autocomplete="new-password" spellcheck="false" aria-describedby="password-hint"><button class="text-button" id="show-password" aria-label="Show password">Show</button></div><p class="hint" id="password-hint">Use at least 12 characters. A longer phrase is easier to remember.</p><div id="confirm-field"><label class="field-label" for="confirm-password">Confirm password</label><input type="password" id="confirm-password" autocomplete="new-password"><p id="password-error" class="error" aria-live="polite"></p><p class="password-warning">Keep your password somewhere safe. It cannot be recovered.</p></div></div>
+            <div class="separator"></div><div class="destination"><span class="folder-icon" aria-hidden="true">↳</span><div><strong>Save a new copy</strong><p id="destination-note">Choose a location when saving.</p></div></div>
+          </div>
+          <div class="action-area"><div class="summary"><span id="action-summary">4 documents selected</span><strong id="summary-type">PDF</strong></div><button class="primary" id="run">Preview conversion <span aria-hidden="true">→</span></button><p class="action-note" id="action-note">Preview only · no files are processed</p></div>
+        </aside>
+      </div>
+      <section class="result" id="result" aria-live="polite" hidden><div><strong id="result-title"></strong><p id="result-detail"></p></div><progress id="progress" max="100" value="0" aria-label="Demo processing progress"></progress><button class="secondary" id="result-action">Cancel preview</button></section>
+      <footer><span><span class="footer-dot"></span>Private by design</span><p>This prototype demonstrates the workflow. Conversion and encryption engines are not connected.</p><span class="version">DESIGN / 02</span></footer>
+    </main>
+  </div>
+  <script src="app.js"></script>
+  <script src="layout.js"></script>
+</body>
+</html>
+

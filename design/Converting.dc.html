@@ -1,0 +1,160 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif; color: #1f1e1b; -webkit-font-smoothing: antialiased; }
+    a { color: #2f6f5e; } a:hover { color: #245548; }
+  </style>
+</helmet>
+<div style="width: 1200px; height: 760px; background: #f4f3f0; display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden;">
+
+  <div style="display: flex; align-items: center; justify-content: space-between; height: 56px; padding: 0 20px; background: #ffffff; border-bottom: 1px solid #e3e1dc; box-sizing: border-box;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <div style="width: 28px; height: 28px; border-radius: 6px; background: #2f6f5e; display: flex; align-items: center; justify-content: center;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h11M4 12h7M4 17h9"></path><path d="M17 15l3 3-3 3"></path></svg>
+      </div>
+      <div style="font-size: 15px; font-weight: 600;">Doc Converter</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid #e3e1dc; border-radius: 6px; background: #ffffff; font-size: 13px; color: #a09d95;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg>
+      <span>Settings</span>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-grow: 1; min-height: 0;">
+
+    <div style="display: flex; flex-direction: column; flex-grow: 1; min-width: 0; padding: 20px; gap: 12px; box-sizing: border-box;">
+
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid #e3e1dc; border-radius: 6px; background: #fafaf8; font-size: 13px; font-weight: 500; color: #a09d95;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+            <span>Add files</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid #e3e1dc; border-radius: 6px; background: #fafaf8; font-size: 13px; font-weight: 500; color: #a09d95;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+            <span>Add folder</span>
+          </div>
+        </div>
+        <div style="font-size: 13px; color: #6b6862;">Converting 2 of 4</div>
+      </div>
+
+      <div style="height: 6px; border-radius: 3px; background: #e3e1dc; overflow: hidden;">
+        <div style="width: 42%; height: 6px; background: #2f6f5e;"></div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; flex-grow: 1; min-height: 0; background: #ffffff; border: 1px solid #e3e1dc; border-radius: 8px; overflow: hidden;">
+        <div style="display: grid; grid-template-columns: 36px minmax(0, 1fr) 90px 110px 140px 160px; align-items: center; height: 36px; padding: 0 12px; border-bottom: 1px solid #e3e1dc; font-size: 12px; font-weight: 500; color: #6b6862; text-transform: uppercase; letter-spacing: 0.04em; box-sizing: border-box;">
+          <div></div>
+          <div>File</div>
+          <div>Size</div>
+          <div>From</div>
+          <div>To</div>
+          <div>Status</div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 36px minmax(0, 1fr) 90px 110px 140px 160px; align-items: center; height: 48px; padding: 0 12px; border-bottom: 1px solid #efede9; font-size: 13px; box-sizing: border-box;">
+          <div><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2f6f5e" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg></div>
+          <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b6862" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path></svg>
+            <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Quarterly report 2026.docx</span>
+          </div>
+          <div style="color: #6b6862;">2.1 MB</div>
+          <div><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 2px 6px; border-radius: 4px; background: #f0efeb; color: #4a4843;">DOCX</span></div>
+          <div><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 2px 6px; border-radius: 4px; background: #f0efeb; color: #4a4843;">PDF</span></div>
+          <div style="display: flex; align-items: center; gap: 8px; color: #2f6f5e;"><span>Done</span><span style="color: #8a877f;">·</span><span style="color: #6b6862;">Show file</span></div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 36px minmax(0, 1fr) 90px 110px 140px 160px; align-items: center; height: 48px; padding: 0 12px; border-bottom: 1px solid #efede9; font-size: 13px; background: #f7fbf9; box-sizing: border-box;">
+          <div><div style="width: 16px; height: 16px; border-radius: 50%; border: 2px solid #cfe3dc; border-top-color: #2f6f5e; box-sizing: border-box;"></div></div>
+          <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b6862" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path></svg>
+            <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Invoice_0342.pdf</span>
+          </div>
+          <div style="color: #6b6862;">640 KB</div>
+          <div><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 2px 6px; border-radius: 4px; background: #f0efeb; color: #4a4843;">PDF</span></div>
+          <div><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 2px 6px; border-radius: 4px; background: #f0efeb; color: #4a4843;">DOCX</span></div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <div style="display: flex; justify-content: space-between; font-size: 12px; color: #4a4843;"><span>Converting</span><span>68%</span></div>
+            <div style="height: 4px; border-radius: 2px; background: #e3e1dc; overflow: hidden; width: 130px;"><div style="width: 68%; height: 4px; background: #2f6f5e;"></div></div>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 36px minmax(0, 1fr) 90px 110px 140px 160px; align-items: center; height: 48px; padding: 0 12px; border-bottom: 1px solid #efede9; font-size: 13px; box-sizing: border-box;">
+          <div></div>
+          <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b6862" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path></svg>
+            <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">notes.md</span>
+          </div>
+          <div style="color: #6b6862;">12 KB</div>
+          <div><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 2px 6px; border-radius: 4px; background: #f0efeb; color: #4a4843;">MD</span></div>
+          <div><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 2px 6px; border-radius: 4px; background: #f0efeb; color: #4a4843;">PDF</span></div>
+          <div style="color: #8a877f;">Waiting</div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 36px minmax(0, 1fr) 90px 110px 140px 160px; align-items: center; height: 48px; padding: 0 12px; border-bottom: 1px solid #efede9; font-size: 13px; box-sizing: border-box;">
+          <div><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#b42318" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"></path></svg></div>
+          <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b6862" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path></svg>
+            <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Team offsite deck.pptx</span>
+          </div>
+          <div style="color: #6b6862;">9.6 MB</div>
+          <div><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 2px 6px; border-radius: 4px; background: #f0efeb; color: #4a4843;">PPTX</span></div>
+          <div><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 2px 6px; border-radius: 4px; background: #f0efeb; color: #4a4843;">PDF</span></div>
+          <div style="display: flex; align-items: center; gap: 8px; color: #b42318;"><span>Failed</span><span style="color: #8a877f;">·</span><span style="color: #6b6862;">Why?</span></div>
+        </div>
+
+        <div style="flex-grow: 1;"></div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; width: 320px; flex-shrink: 0; padding: 20px; gap: 20px; background: #ffffff; border-left: 1px solid #e3e1dc; box-sizing: border-box;">
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 12px; font-weight: 500; color: #6b6862; text-transform: uppercase; letter-spacing: 0.04em;">Convert all to</div>
+        <div style="display: flex; align-items: center; justify-content: space-between; height: 38px; padding: 0 12px; border: 1px solid #e3e1dc; border-radius: 6px; font-size: 14px; color: #a09d95; background: #fafaf8; box-sizing: border-box;">
+          <span>PDF</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c9c6bf" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 12px; font-weight: 500; color: #6b6862; text-transform: uppercase; letter-spacing: 0.04em;">Save to</div>
+        <div style="font-size: 14px; color: #a09d95;">Same folder as each file</div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 8px; background: #f4f3f0;">
+        <div style="font-size: 12px; font-weight: 500; color: #6b6862; text-transform: uppercase; letter-spacing: 0.04em;">Progress</div>
+        <div style="display: flex; justify-content: space-between; font-size: 13px;"><span style="color: #6b6862;">Done</span><span>1</span></div>
+        <div style="display: flex; justify-content: space-between; font-size: 13px;"><span style="color: #6b6862;">Failed</span><span style="color: #b42318;">1</span></div>
+        <div style="display: flex; justify-content: space-between; font-size: 13px;"><span style="color: #6b6862;">Left</span><span>2</span></div>
+        <div style="display: flex; justify-content: space-between; font-size: 13px;"><span style="color: #6b6862;">Time left</span><span>about 20 s</span></div>
+      </div>
+
+      <div style="flex-grow: 1;"></div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: center; gap: 8px; height: 44px; border-radius: 8px; border: 1px solid #d5d3cd; background: #ffffff; color: #1f1e1b; font-size: 15px; font-weight: 600;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+          <span>Stop</span>
+        </div>
+        <div style="font-size: 12px; color: #8a877f; text-align: center;">Finished files are kept.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: center; justify-content: space-between; height: 28px; padding: 0 20px; background: #ffffff; border-top: 1px solid #e3e1dc; font-size: 12px; color: #8a877f; box-sizing: border-box;">
+    <span>Converting Invoice_0342.pdf</span>
+    <span>PDF · DOCX · PPTX · XLSX · MD · HTML · TXT · ODT</span>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

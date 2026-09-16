@@ -1,0 +1,10 @@
+[package]
+name = "converter-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+age = "0.11"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
+tempfile = "3"
+thiserror = "2"

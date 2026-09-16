@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Doc Converter",
+  "version": "0.1.0",
+  "identifier": "com.privateconverter.desktop",
+  "build": { "frontendDist": "../dist", "devUrl": "http://localhost:1420" },
+  "app": {
+    "windows": [{ "title": "Doc Converter — Development", "width": 1220, "height": 840, "minWidth": 800, "minHeight": 620 }],
+    "security": { "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost" }
+  },
+  "bundle": { "active": false }
+}

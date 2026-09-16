@@ -1,0 +1,16 @@
+{
+  "pages": [
+    { "id": "page-1", "name": "App" },
+    { "id": "page-2", "name": "Not chosen" }
+  ],
+  "artboards": [
+    { "file": "Main.dc.html", "title": "Main window", "x": 0, "y": 0, "w": 1200, "h": 760, "page": "page-1" },
+    { "file": "Converting.dc.html", "title": "While converting", "x": 1300, "y": 0, "w": 1200, "h": 760, "page": "page-1" },
+    { "file": "AltWizard.dc.html", "title": "Alternate: step by step (sketch)", "x": 0, "y": 0, "w": 1200, "h": 760, "page": "page-2" }
+  ],
+  "annotations": [
+    { "id": "note-main", "x": 0, "y": -140, "w": 520, "page": "page-1", "text": "Chosen direction. One window: file list on the left, output settings on the right, one big Convert button. Each file can have its own target format." },
+    { "id": "note-alt", "x": 0, "y": -120, "w": 520, "page": "page-2", "text": "Not chosen. 3-step wizard sketch, kept for reference." }
+  ],
+  "launch": { "view": "canvas", "page": "page-1" }
+}

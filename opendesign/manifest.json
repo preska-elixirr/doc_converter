@@ -1,0 +1,25 @@
+{
+  "sections": [
+    {
+      "groups": [
+        {
+          "files": [
+            {
+              "label": "index.html",
+              "path": "mockups/document-converter/index.html"
+            }
+          ],
+          "slug": "document-converter"
+        }
+      ],
+      "label": "Mockups",
+      "id": "mockups"
+    },
+    {
+      "groups": [],
+      "label": "Design Systems",
+      "id": "design-systems"
+    }
+  ],
+  "generated": "2026-09-15T19:12:17.0285533Z"
+}

@@ -1,0 +1,16 @@
+[package]
+name = "doc-converter"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+converter-core = { path = "../../../crates/core" }
+rfd = "0.16"
+serde = { version = "1", features = ["derive"] }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
