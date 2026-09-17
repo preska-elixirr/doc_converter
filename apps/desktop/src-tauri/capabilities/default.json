@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main window: core events for progress, engine status and drag-and-drop, plus webview zoom for the UI scale setting.",
+  "windows": ["main"],
+  "permissions": ["core:default", "core:webview:allow-set-webview-zoom"]
+}

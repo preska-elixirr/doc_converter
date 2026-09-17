@@ -1,10 +1,11 @@
 ---
 title: "File Queue"
-description: "Adding, selecting, and removing files in the workspace, and how the queue differs from the accepted design."
+description: "The multi-select queue table: adding by picker or drop, per-row formats, eligibility per mode, statuses, and removal."
 type: "guide"
 tags:
   - queue
   - file-picker
+  - drag-and-drop
   - ui
 resource: "docs/FILE_QUEUE.md"
 last_updated: "2026-09-16"
@@ -13,59 +14,60 @@ source_sync: "manual"
 
 # File Queue
 
-The left column of the workspace lists the files the user has picked. In this build the queue is a single-selection list: many files can be listed, but one file is processed per job.
+The left column lists every file the user has added. Rows carry a checkbox, so one batch can process many files. The queue is shared by all tabs; switching tabs keeps the rows and re-evaluates which ones the tab can use.
 
 Owning files:
 
-- `apps/desktop/src/main.tsx` - `files`, `selected`, `add()`, the list markup
-- `apps/desktop/src-tauri/src/main.rs` - `pick_files`
+- `apps/desktop/src/App.tsx` - `Row`, `blocked`, `statusText`, the table
+- `apps/desktop/src-tauri/src/main.rs` - `pick_files`, `add_paths`, `register`
 
-## Behaviour
+## Adding files
 
-```mermaid
-flowchart TD
-  A[Click Add files or the empty card] --> B[pick_files opens native picker]
-  B -- cancel --> C[List unchanged]
-  B -- picked --> D[Append assets to the list]
-  D --> E[Select the first newly added file]
-  E --> F[Radio buttons switch the selected file]
-  F --> G[Remove button drops a row]
-  G -- removed row was selected --> H[Selection cleared]
-```
+- **Add files** and the drop zone open the native multi-select picker.
+- **Drag and drop** from Explorer works anywhere in the window; the drop zone lights up while dragging.
+- Files are appended; adding the same file twice makes two rows with different IDs.
+- Each new row starts selected, with the output format defaulting to PDF when available.
 
-- **Add files** appends. It never replaces the list. Picking the same file twice creates two rows with different IDs.
-- **Selection** is a radio group named `file`. Changing it clears the message and error area.
-- **Remove** filters the row out of React state only. The backend keeps the path until exit.
-- **Count badge** in the heading shows the number of rows.
-- **Empty state** is one large dashed button. Its subtitle names the accepted types for the current operation:
-  - Images: `PNG, JPG and BMP`
-  - Decrypt: `Password-encrypted .age files`
-  - Encrypt: `Any document or file`
-- Every row shows the file name and size in KB with one decimal.
-- All controls are disabled while a job runs. Add is also disabled outside the desktop app.
+## Columns
 
-## Type gating
-
-The queue accepts any file. Suitability is checked at the selected file, by extension, when the primary action is evaluated:
-
-| Operation | Accepted extension |
+| Column | Content |
 | --- | --- |
-| image | `.png`, `.jpg`, `.jpeg`, `.bmp` |
-| decrypt | `.age` |
-| encrypt | anything |
+| Selected | Checkbox. The header checkbox selects all, shows indeterminate for a partial selection. |
+| Document | Type badge (from content detection, not extension), name, size, and extra facts: page count and `locked` for PDFs, `width × height` for images. |
+| Output | Convert: a per-row select of PDF, DOCX, TXT, HTML, MD; formats the file cannot reach are marked ✕ and disabled, with the reason as tooltip. `Merged PDF` when combining. Images: PNG, JPG, WEBP, PDF. Encrypt: `PDF + key` or `.age`. Decrypt: `Original`. The header reads `RESTORE TO` in Decrypt. |
+| Status | See below. |
+| Remove | Drops the row. The backend keeps the path until exit. |
 
-A selected file that does not match shows `This file type is not supported for the selected operation.` and disables the action. The core repeats the check on real content for images and on the age header for decryption, so a renamed file still fails safely.
+`Clear all` empties the queue. `N selected` counts checked rows regardless of eligibility.
+
+## Eligibility per mode
+
+`blocked(row, mode, protection)` returns the reason shown in the status column, or nothing when the row can run. Blocked rows stay in the queue, keep their checkbox, and are skipped; the action note counts them.
+
+| Mode | Eligible | Reason otherwise |
+| --- | --- | --- |
+| Convert | PDF, DOCX, ODT, PPTX, XLSX, MD, HTML, TXT | `Unsupported file` |
+| Images | PNG, JPG, BMP, WebP, TIFF | `Unsupported file` |
+| Encrypt, password-protected PDF | PDF without a password | `PDF required`, `Already protected` |
+| Encrypt, encrypted file | anything | none |
+| Decrypt | locked PDF, `.age` | `No password set`, `Unsupported file` |
+
+Kinds come from the backend's content sniffing, so a `.txt` that is really a PDF is treated as a PDF.
+
+## Statuses
+
+| Status | Colour | Meaning |
+| --- | --- | --- |
+| Ready | green | Will run when the action is pressed |
+| Queued | green | Batch started, waiting |
+| Working…, Converting to PDF…, Ready to merge | grey | Backend detail text |
+| Saved, Combined | green | Output written; the path is in the tooltip |
+| Failed | red | The error message |
+| Cancelled | amber | Stopped before or during the item |
+| blocked reasons | amber | Not eligible in this mode |
+
+Selecting rows, changing a format, or switching tabs clears finished statuses back to Ready and hides the result bar.
 
 ## Differences from the accepted design
 
-The [design reference](DESIGN_REFERENCE.md) shows a richer queue. Not yet implemented:
-
-- multi-select with checkboxes, select-all, and a selection count
-- per-row output format dropdown
-- per-row status column (`Ready`, `Queued`, `Unsupported file`)
-- drag-and-drop zone
-- `Clear all`
-- `Load example files`
-- a table layout with a type badge per row
-
-The current list keeps the same section heading, count badge, and footnote text so it can grow into the table without a redesign.
+Implemented from the mockup: multi-select with select-all, per-row output select, status column, drop zone, `Clear all`, type badges, size and metadata line. Not implemented: `Load example files`, because the app never fabricates files.

@@ -1,6 +1,6 @@
 ---
 title: "IPC Commands And File Access"
-description: "The three Tauri commands, backend-owned input IDs, native dialogs, and why the frontend never sees a path."
+description: "The eight Tauri commands, two events, backend-owned input IDs, native dialogs, drag-and-drop, and the capability file."
 type: "reference"
 tags:
   - ipc
@@ -13,82 +13,109 @@ source_sync: "manual"
 
 # IPC Commands And File Access
 
-The frontend talks to Rust through three Tauri commands. It never receives or sends a filesystem path. The backend mints an opaque ID for each picked file and only accepts those IDs back.
+The frontend talks to Rust through eight commands and listens to two events. It never receives a filesystem path for reading, and the only paths it sends are the ones the native drag-and-drop event handed it. The backend mints an opaque ID per file and accepts only those IDs.
 
 Owning files:
 
-- `apps/desktop/src-tauri/src/main.rs` - commands and `AppState`
-- `apps/desktop/src/main.tsx` - the `invoke` call sites
+- `apps/desktop/src-tauri/src/main.rs` - commands, events, `AppState`
+- `apps/desktop/src-tauri/capabilities/default.json` - webview permissions
+- `apps/desktop/src/api.ts` - the typed `invoke` wrappers
 
 ## Why IDs instead of paths
 
-- No Tauri filesystem or dialog plugin is enabled. The webview cannot open, read, or list files on its own.
-- The path map lives in Rust. Even a compromised page can only name IDs the user already picked.
-- The save location comes from a native dialog run by Rust, so the page cannot choose it either.
+- No Tauri filesystem, shell, HTTP or dialog plugin is enabled. The page cannot open, read, list or write files.
+- The path map lives in Rust. A compromised page can only name IDs the user already added.
+- Save locations and folders come from native dialogs run by Rust.
 
-This matches section 4 of the [application plan](APPLICATION_PLAN.md): file contents and arbitrary paths must not travel through UI state.
+## Capability
+
+`capabilities/default.json` grants `core:default` and `core:webview:allow-set-webview-zoom` to the `main` window. The first includes `core:event:default`, which the page needs to listen for events and for the native drag-and-drop event; the second lets the UI scale setting zoom the webview. Application commands are allowed for local content by Tauri's default policy because the app defines no ACL manifest of its own.
 
 ## Commands
 
-### `pick_files() -> Vec<Asset>`
+### `pick_files() -> Asset[]`
 
-1. Fails with `A job is running` if `busy` is set.
-2. Opens the native multi-select file picker with `rfd`.
-3. For each picked entry: canonicalizes the path, reads metadata, skips anything that is not a regular file.
-4. Mints an ID from the `next` counter, stores `id -> path`, and returns `{ id, name, bytes }`.
+Refused while busy. Opens the native multi-select picker, canonicalizes each path, skips non-files, inspects the kind, and returns assets. Empty list on cancel.
 
-Returns an empty list when the user cancels. There is no file type filter in the dialog; the UI decides afterwards whether the selected file suits the operation.
+### `add_paths(paths: string[]) -> Asset[]`
 
-### `process_file(id, operation, password, format, max_edge, quality) -> String`
+Same registration for paths dropped on the window. The paths come from Tauri's drag-and-drop event, which the native layer produces; they are still canonicalized and checked to be regular files. At most 500 per call. Refused while busy.
 
-Runs one job. See [`JOB_LIFECYCLE.md`](JOB_LIFECYCLE.md) for the full flow.
+### `engine_status() -> { ready, office }`
 
-| Argument | Used by | Notes |
-| --- | --- | --- |
-| `id` | all | Must be a key in the file map, else `Select the file again` |
-| `operation` | all | `encrypt`, `decrypt`, or `image`; anything else is `not implemented yet` |
-| `password` | encrypt, decrypt | Encrypt requires 12 or more chars. Image sends an empty string. |
-| `format` | image | `png` or `jpg` |
-| `max_edge` | image | `0` keeps size; otherwise fit within a square of this size |
-| `quality` | image | `1` to `100`, JPEG only |
+`ready` is false until detection finished. `office` is `{ path, version, markdown }` or `null`. See [`ENGINES.md`](ENGINES.md).
 
-The frontend passes `maxEdge`; Tauri maps camelCase arguments to the snake_case parameter.
+### `run_batch(request) -> { result, reports }`
 
-The success string is either `Saved <path>` or `Save cancelled. No output created.` Both resolve the promise. Errors reject with a `String`.
+Runs a batch; see [`JOB_LIFECYCLE.md`](JOB_LIFECYCLE.md). `result` is `saved`, `nothing` or `cancelled`.
+
+```typescript
+type BatchRequest = {
+  mode: 'convert' | 'images' | 'encrypt' | 'decrypt';
+  items: { id: string; format?: string; page_breaks?: number[] }[];
+  merge: boolean;              // convert only
+  merge_name: string;
+  layout: { orientation: 'keep' | 'portrait' | 'landscape';
+            margins: 'narrow' | 'normal' | 'wide';
+            spacing: 'compact' | 'comfortable' | 'spacious';
+            page_breaks: number[] };   // batch-wide part; per-item breaks win
+  password: string;
+  protect: boolean;            // convert: protect PDF outputs
+  encryption: 'pdf' | 'file';  // encrypt tab
+  image: { max_edge: number; quality: number };
+};
+```
+
+Errors reject with a string: `Select at least one file.`, the password messages, `A job is already running`, `Select the file again`, `Unknown output format …`, `Output already exists. Choose a new filename.`
 
 ### `cancel_job()`
 
-Sets the cancel flag. Returns immediately. Safe to call at any time.
+Sets the cancel flag. Returns immediately.
 
-## Frontend call sites
+### `outline(id) -> OutlineEntry[]`
 
-```mermaid
-flowchart TD
-  ADD[Add files button or empty-state card] --> PF[invoke pick_files]
-  PF --> APPEND[Append to list and select the first new file]
-  RUN[Primary action button] --> PR[invoke process_file with id and options]
-  PR --> MSG[Show notice or error, clear passwords]
-  CANCEL[Cancel processing button] --> CJ[invoke cancel_job]
-```
+Blocks (Markdown, text, HTML) or body paragraphs (DOCX) as `{ index, kind, text }`. Empty for other kinds.
 
-All three calls are wrapped in `try/catch` and any rejection is shown as the error string.
+### `preview(id, format, layout) -> ArrayBuffer`
+
+The PDF the current settings would produce for the row's target `format` (`pdf` or `docx`), as raw bytes through Tauri's binary response. A newer call cancels the previous preview; a running batch refuses it. Images preview as a one-page PDF.
+
+### `refresh_outputs(ids) -> { id, outputs }[]`
+
+Recomputes the Convert options for queued files with the engines known now. The page calls it when `engines-ready` fires, so files added before detection finished get their Office formats.
+
+## Events
+
+| Event | Payload | When |
+| --- | --- | --- |
+| `engines-ready` | none | engine detection finished at startup |
+| `batch-progress` | `ItemReport { index, status, detail, output }` | every item state change during `run_batch` |
 
 ## Asset shape
 
 ```typescript
-type Asset = { id: string; name: string; bytes: number };
+type Asset = {
+  id: string; name: string; bytes: number;
+  kind: InputKind; label: string;          // e.g. 'docx', 'DOCX'
+  outputs: Availability[];                 // Convert options for documents, else []
+  pdf: { pages: number; encrypted: boolean } | null;
+  image: { kind: InputKind; width: number; height: number } | null;
+};
 ```
 
-`name` is the file name only, never the directory. `bytes` is shown as KB with one decimal.
+`outputs` is computed with the engines known at the time the file was added and refreshed through `refresh_outputs` once detection finishes.
+
+## Drag and drop
+
+`getCurrentWebview().onDragDropEvent` fires `enter`, `over`, `leave` and `drop`. The page highlights the drop zone on enter/over and calls `add_paths` on drop with the event's paths. Dropping works anywhere in the window.
 
 ## Browser preview
 
-When `isTauri()` is false, the UI shows a notice and disables Add and the primary action. `invoke` would throw outside Tauri, so this guard keeps the Vite dev page usable for layout work.
+When `isTauri()` is false, the page shows a notice and disables Add and the primary action. Everything else renders, so layout work can happen with `pnpm dev` alone.
 
 ## Not exposed
 
-- reading file contents into the page
+- reading file contents into the page (previews are rendered PDFs, not the source)
 - listing directories
 - deleting or overwriting files
 - opening the output after save
-- drag and drop from Explorer (the mockup has a drop zone; the app does not)

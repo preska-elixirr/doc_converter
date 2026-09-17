@@ -1,6 +1,6 @@
 ---
 title: "Security And Privacy"
-description: "Content security policy, IPC surface, secret handling, decoder limits, and the gaps that remain before release."
+description: "Content security policy, IPC surface, LibreOffice isolation, secret handling, decoder limits, temporary files, and the gaps that remain before release."
 type: "guide"
 tags:
   - security
@@ -18,61 +18,80 @@ The product promise is local processing with no uploads. This document lists wha
 Owning files:
 
 - `apps/desktop/src-tauri/tauri.conf.json` - CSP and window settings
+- `apps/desktop/src-tauri/capabilities/default.json` - webview permissions
 - `apps/desktop/src-tauri/src/main.rs` - the only IPC surface
-- `crates/core/src/lib.rs` - secrets, limits, and safe writes
+- `crates/core/src/office.rs` - LibreOffice isolation
+- `crates/core/src/pdf.rs`, `crypto.rs`, `images.rs` - secrets, limits, safe writes
 
 ## Network
 
-The app makes no network requests. There is no update check, no telemetry, no licensing call, and no remote font or script. The CSP allows `connect-src` only to the Tauri IPC origins:
+The app makes no network requests. There is no update check, no telemetry, no licensing call, and no remote font or script. PDF.js is bundled and its worker loads from the app's own origin. The CSP is unchanged:
 
 ```text
 default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
 img-src 'self' data:; connect-src ipc: http://ipc.localhost
 ```
 
-`style-src 'unsafe-inline'` is present for Vite-injected styles. Tightening it is a release task.
+`default-src 'self'` also governs the PDF.js worker. `style-src 'unsafe-inline'` is present for Vite-injected styles; tightening it is a release task.
+
+LibreOffice runs with its online update check disabled in the private profile. It is not otherwise firewalled; a document with remote links could make LibreOffice fetch them during conversion. Blocking that needs a firewall rule or a restricted token and is listed under gaps.
 
 ## IPC surface
 
-Three commands, described in [`IPC_AND_FILE_ACCESS.md`](IPC_AND_FILE_ACCESS.md). No Tauri plugins are enabled, so the webview has no filesystem, shell, HTTP, or dialog access of its own. The only paths the backend accepts are the ones it canonicalized after a user-driven picker.
+Seven commands and two events, described in [`IPC_AND_FILE_ACCESS.md`](IPC_AND_FILE_ACCESS.md). The plugin permissions are `core:default`, needed for events, and `core:webview:allow-set-webview-zoom` for the UI scale setting. The webview has no filesystem, shell, HTTP or dialog access of its own. Paths accepted by the backend are the ones it canonicalized after a user-driven picker or a native drop event.
+
+## LibreOffice isolation
+
+- Private user profile under the app's local data folder; the user's own LibreOffice is never involved.
+- Macro security *Very high* in that profile; headless conversion never runs document macros.
+- A Windows job object with kill-on-close owns every process LibreOffice starts; cancel and timeout terminate the whole tree.
+- No passwords, no secrets and no user settings are passed to LibreOffice. It sees the input file and an output folder inside the batch work folder.
+- Its stdout is discarded; stderr is kept in memory for error messages only and never logged to disk.
+
+This is process separation, not a sandbox. A malicious document can still exploit LibreOffice with the user's rights. See [`ENGINES.md`](ENGINES.md).
 
 ## Secrets
 
 - Passwords go from the input field, through `invoke`, into `SecretString` in Rust. The core never logs them.
-- The UI clears both password fields after every job and on every operation switch.
-- Nothing is persisted. There is no settings file, history, or `localStorage` use in the app. The mockup stores the active mode in `localStorage`; the app does not.
-- JavaScript strings and the IPC JSON copy cannot be zeroed. Treat that as a known limit, not a bug to fix in the frontend.
+- PDF passwords are handed to lopdf in memory through `expose_secret`; they never appear on a command line, in a process list, or in a temporary file.
+- The UI clears both password fields after every job and on every tab change.
+- The only persisted data is the UI language and UI scale, in the webview's `localStorage`. There is no settings file and no history; no path, name, or password is ever stored.
+- JavaScript strings and the IPC JSON copy cannot be zeroed. Treat that as a known limit.
 
 ## File safety
 
-- Sources are opened read-only. Tests confirm the source bytes are unchanged after image conversion.
-- Output goes to a temp file beside the destination and is moved with `persist_noclobber`. See [`JOB_LIFECYCLE.md`](JOB_LIFECYCLE.md).
-- An existing destination is rejected twice: once in the command, once in the core.
-- Wrong password, truncated ciphertext, or cancellation leaves no partial file. The test `crypto_roundtrip_wrong_password_and_truncation` checks this.
+- Sources are opened read-only. DOCX edits and every conversion work on copies in the batch work folder, and the DOCX rewrite itself goes through a temp file and a no-overwrite move like every other output.
+- Final output goes to a temp file beside the destination and is moved with `persist_noclobber`. Existing files are never overwritten; folder outputs get numbered names.
+- Wrong password, truncation, cancellation, or an engine failure leaves no partial file at the destination.
+- The batch work folder is removed when the batch ends; stale folders are removed at the next start, except folders another running instance still holds a lock on.
 
-## Decoder limits
+## Temporary data
 
-Image decoding runs in the application process, so a malicious image could crash the app. Limits reduce the blast radius:
+Some data touches disk briefly inside `%TEMP%\doc-converter-*`: edited DOCX copies, LibreOffice output, per-document PDFs before a merge, HTML bridges, preview PDFs. Deleting a file on an SSD does not guarantee secure erasure. Decrypted plaintext from the Decrypt tab streams directly to the temp file beside the chosen destination, as before.
+
+## Decoder and parser limits
 
 | Limit | Value |
 | --- | --- |
-| Max width or height | 16000 px |
-| Max decoder allocation | 256 MiB |
-| Max `max_edge` argument | 16000 |
-| Animated PNG | Rejected before decode |
+| Image width or height | 16000 px |
+| Image decoder allocation | 256 MiB |
+| Animated PNG, animated WebP, multi-page TIFF | Rejected before decode |
+| PDF text extraction per page | 64 MiB decompressed |
+| Dropped paths per event | 500 |
 
-Formats are sniffed from content, not from the file extension. Only PNG, JPEG, and BMP decoders are compiled in.
+Formats are sniffed from content. Image decoding, PDF parsing, Typst compilation and age run in the application process, so a malicious file can still crash the app.
 
-## Encryption format
+## Encryption formats
 
-`.age` with the passphrase (scrypt) recipient. Standard format, readable by `age` and `rage`. Decryption authenticates the whole stream before the temp file is committed. Decrypting a file that was encrypted to a public-key recipient is refused with a clear message.
+- Files: `.age` with the passphrase (scrypt) recipient, standard and interoperable. Decryption authenticates the whole stream before commit.
+- PDFs: AES-256, PDF 2.0 standard security handler, random owner password, all permissions granted. See [`PDF_TOOLS.md`](PDF_TOOLS.md).
 
-The plan replaced the mockup's invented `.dcenc` format with `.age` on purpose. Do not reintroduce a custom container.
+Do not reintroduce a custom container; the mockup's `.dcenc` was replaced on purpose.
 
 ## Known gaps before release
 
-- No worker process isolation. Decoders and age run in-process.
-- No crash cleanup of orphaned temp files.
+- No worker process isolation for lopdf, image, Typst or age; only LibreOffice is out of process.
+- LibreOffice has no memory limit and no network block beyond the disabled update check.
 - Suggested output names reveal the original name, for example `report.docx.age`.
 - No colour-profile handling; CMYK JPEG and ICC profiles are untested.
 - No code signing, installer, or WebView2 provisioning.

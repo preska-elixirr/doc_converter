@@ -1,9 +1,10 @@
 ---
 title: "Job Lifecycle"
-description: "How one processing job runs: busy gating, save dialog, blocking thread, cooperative cancellation, temporary output, and no-overwrite commit."
+description: "How a batch runs: validation, busy gating, destination dialogs, the work folder, per-item progress events, cancellation, and no-overwrite commits."
 type: "guide"
 tags:
   - jobs
+  - batch
   - cancellation
   - file-safety
 resource: "docs/JOB_LIFECYCLE.md"
@@ -13,110 +14,117 @@ source_sync: "manual"
 
 # Job Lifecycle
 
-A job is one call to the `process_file` command for one input file. The app runs at most one job at a time. Every job ends in exactly one of three ways: a saved output, an error with no output, or a cancelled save dialog with no output.
+A job is one call to `run_batch` with one or more queue rows. The app runs one job at a time. Each row ends as saved, failed, or cancelled; the batch as a whole ends as `saved`, `nothing` (no row saved), or `cancelled` (the destination dialog was dismissed).
 
 Owning files:
 
-- `apps/desktop/src-tauri/src/main.rs` - `process_file`, `cancel_job`, `AppState`
-- `crates/core/src/lib.rs` - `copy_cancel`, `output`, `commit`, and the three operations
+- `apps/desktop/src-tauri/src/main.rs` - `run_batch`, `cancel_job`, `preview`, `AppState`
+- `crates/core/src/job.rs` - `run`, `run_item`, `run_merge`, `convert_document`, work folders
+- `crates/core/src/lib.rs` - `output`, `commit`, `copy_file`, `write_bytes`, `unique_path`
 
 ## Flow
 
 ```mermaid
 flowchart TD
-  A[UI calls process_file] --> B{operation is encrypt, decrypt, or image?}
-  B -- no --> E1[Err: not implemented yet]
-  B -- yes --> C{encrypt and password shorter than 12 chars?}
-  C -- yes --> E2[Err: use a longer password]
-  C -- no --> D{busy already true?}
+  A[UI calls run_batch] --> B{items empty?}
+  B -- yes --> E1[Err: select at least one file]
+  B -- no --> C{password rules}
+  C -- fail --> E2[Err: password message]
+  C -- ok --> D{busy already?}
   D -- yes --> E3[Err: a job is already running]
   D -- no --> F[busy = true, cancel = false]
-  F --> G{ID in file map?}
-  G -- no --> E4[Err: select the file again]
-  G -- yes --> H[Build suggested output name]
-  H --> I[Native save dialog]
-  I -- cancelled --> R1[Ok: save cancelled, no output]
-  I -- chosen --> J{destination exists?}
-  J -- yes --> E5[Err: output already exists]
-  J -- no --> K[spawn_blocking: core operation]
-  K -- Ok --> R2[Ok: Saved path]
-  K -- Err --> E6[Err: core message]
-  R1 --> Z[busy = false]
-  R2 --> Z
-  E4 --> Z
-  E5 --> Z
-  E6 --> Z
+  F --> G[Build tasks from ids and mode]
+  G --> H{destination}
+  H -- merge --> I1[Save dialog with merge name]
+  H -- one item --> I2[Save dialog with suggested name]
+  H -- several --> I3[Folder picker]
+  I1 & I2 & I3 -- dismissed --> R1[Ok: result cancelled, no reports]
+  I1 & I2 -- exists --> E4[Err: output already exists]
+  I1 & I2 & I3 -- chosen --> J[spawn_blocking: job::run]
+  J --> K[batch-progress event per change]
+  K --> L[Ok: result saved or nothing, reports]
+  R1 & E4 & L --> Z[busy = false]
 ```
 
-The early checks for operation name, password length, and busy state happen before `busy` flips, so a rejected call never blocks a later one.
+Checks before `busy` flips never block a later call.
 
-## Suggested output names
+## Tasks
 
-| Operation | Suggested name |
+`build_tasks` maps each request item to a `Task` with the canonical source path, its detected kind, and an action:
+
+| Mode | Action |
 | --- | --- |
-| encrypt | `<source name>.age` |
-| decrypt | `restored-<source name without .age>` |
-| image | `<source stem>-converted.<png or jpg>` |
+| convert | `Convert { format }` from the row; PDF when combining |
+| images | `Image { format }` from the row |
+| encrypt, protection `pdf` | `Protect` |
+| encrypt, protection `file` | `Encrypt` |
+| decrypt, PDF input | `Unlock` |
+| decrypt, other input | `Decrypt` |
 
-The user can change the name in the dialog. The dialog does not restrict the folder.
+Page breaks travel per item (`page_breaks`); orientation, margins and spacing are batch-wide. The UI only sends rows that pass the mode's eligibility check, and the core rechecks content (image sniffing, age header, PDF lock status) so a wrong file still fails safely.
 
-## Temporary output and commit
+## Password rules
 
-Every core operation writes to a `NamedTempFile` created in the destination's parent directory, then moves it into place.
+Backend and UI agree:
 
-```mermaid
-flowchart TD
-  A[output: destination exists?] -- yes --> X[Err: choose another name]
-  A -- no --> B[Create temp file in same directory]
-  B --> C[Write all output]
-  C --> D[commit: cancel flag set?]
-  D -- yes --> Y[Err: cancelled, temp dropped]
-  D -- no --> E[sync_all]
-  E --> F[persist_noclobber to destination]
-  F -- destination appeared meanwhile --> Z[Err, temp dropped]
-  F -- ok --> G[Done]
-```
+- new passwords (encrypt tab, or convert with *Password-protect PDFs* on and at least one PDF output or a merge): 12 or more Unicode scalar values, confirmed in the UI. With the switch on but only TXT, HTML, DOCX or Markdown outputs, no password is needed and none is asked for.
+- decrypt: not empty
+- everything else: ignored
 
-Why the same directory: a rename inside one directory is atomic on the same volume, so the destination either exists complete or not at all.
+## Work folder and commit
 
-Why `persist_noclobber`: the existence check in `output()` and in `process_file` runs before the work. If another process creates the destination during the job, the final move still refuses to overwrite.
+`job::run` creates `%TEMP%\doc-converter-<random>` for the batch and removes it when the batch ends. While it exists, a file named `.in-use` inside it is held open with exclusive sharing, so a second instance's startup cleanup can tell that the folder is live. Conversions write there first; the final file is then produced beside its destination with `NamedTempFile` and moved with `persist_noclobber`, so the destination either appears complete or not at all and never overwrites.
 
-Dropping a `NamedTempFile` deletes it. That covers normal errors and cancellation. It does not cover a force-killed process or power loss; cleanup of orphaned temp files on next start is not implemented.
+- `Destination::File` (single item or merge): the exact path from the save dialog, rejected before work starts if it exists.
+- `Destination::Folder`: `unique_path` picks `<stem>.<ext>`, then `<stem> (2).<ext>`, `<stem> (3).<ext>`, … so a rerun never overwrites an earlier result.
+
+At startup the app removes `doc-converter-*` folders left in `%TEMP%` by a crash or a forced exit. A folder whose `.in-use` file cannot be opened belongs to a running instance and is skipped.
+
+Intermediate files that pass through the work folder: edited DOCX copies, LibreOffice output, per-document PDFs before a merge, HTML bridges. They are deleted with the folder. Decrypted plaintext for the Decrypt tab does not pass through it; it streams to the temp file beside the destination as before.
+
+## Per-item execution
+
+Items run one after another. Before each, a `Working` report is sent; after it, `Done` with the output path, `Failed` with the message, or `Cancelled`. When cancellation is detected, the remaining items are reported `Cancelled` without running. A failed item does not stop the batch.
+
+For a combined document all items are converted first (each reported `Working` then `Ready to merge`), then merged, protected if asked, and written once. Any failure fails every item with the same message and nothing is saved.
+
+## Output names
+
+| Action | Name |
+| --- | --- |
+| Convert | `<stem>.<ext>` |
+| Image | `<stem>.<png, jpg, webp or pdf>` |
+| Protect | `<stem>-protected.pdf` |
+| Unlock | `<stem>-unlocked.pdf` |
+| Encrypt | `<full name>.age` |
+| Decrypt | `restored-<name without .age>` |
+| Merge | the *Output filename* field, `.pdf` added if missing |
 
 ## Cancellation
 
-`cancel_job` sets `AppState.cancel` to `true` and returns. It does not wait. The core checks the flag at these points:
+`cancel_job` sets the flag and returns. The core checks it:
 
-- `copy_cancel`: before every 64 KiB chunk during encrypt and decrypt
-- `convert_image`: once after decode and orientation, before resize
-- `commit`: once before the final move
+- between items
+- before every 64 KiB chunk of a stream copy or age operation
+- after decoding an image and before commit
+- every 100 ms while LibreOffice runs, then terminates its job object
+- before each source while merging, and before each zip entry while rewriting a DOCX
+- before and after each conversion step and before every commit
 
-A stage that is already running finishes first. Examples: scrypt key derivation for age, a single large PNG decode, or the JPEG encode. The UI keeps the Cancel button visible until the command returns.
-
-The flag is reset to `false` when the next job starts. Calling `cancel_job` while idle has no effect on that next job.
+A stage already running in process (a PDF encryption, an image encode, a Typst compile) finishes first; nothing it produced is published. The cancelled item and every item after it report `Cancelled`.
 
 ## Busy state
 
-`busy` is `true` from the moment the checks pass until the command returns, which includes the time the save dialog is open. While busy:
+`busy` is true from the checks to the return of `run_batch`, including while a dialog is open. While busy: `pick_files`, `add_paths` and `preview` are refused, a second `run_batch` is refused, and the UI disables every control except Cancel.
 
-- `pick_files` returns an error instead of opening the picker
-- a second `process_file` returns an error
-- the UI disables every control except Cancel
+Previews do not use `busy`. They run behind their own gate: a new preview cancels the previous one and waits for it to stop; `run_batch` cancels the current preview and holds the gate for the whole batch, so a click on Convert never fails because a preview is rendering.
 
-## What the UI shows
+## Progress events
 
-| Moment | Message area |
-| --- | --- |
-| Job started | `Choose a new output filename in the save dialog.` |
-| Save dialog cancelled | `Save cancelled. No output created.` as a notice |
-| Success | `Saved <full destination path>` as a notice |
-| Any error | The error string in a red alert; the notice is cleared |
-
-After every job, success or not, the password and confirmation fields are cleared. The file stays selected so the user can retry.
+Each change emits `batch-progress` with `{ index, status, detail, output }`, where `index` is the position in the request's item list. The UI keeps the row ids of the running batch and updates the matching row's status column and the result bar.
 
 ## Known limits
 
-- One file per job. Batch queues are planned, not implemented.
-- No progress percentage. The UI shows a `Working…` label only.
-- Cancellation is cooperative, as described above.
-- Temp files from a crash are not cleaned up.
+- No progress inside one item; LibreOffice stages show only `Working…`.
+- A batch that is force-killed leaves its work folder until the next start.
+- Items run sequentially; there is no parallel image pool yet.

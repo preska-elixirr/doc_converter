@@ -1,10 +1,11 @@
 ---
 title: "Encryption And Decryption"
-description: "Password-based .age encryption of any file and authenticated restore of the original bytes."
+description: "The Encrypt and Decrypt tabs: password-protected PDFs, password-based .age files, and authenticated restore."
 type: "guide"
 tags:
   - encryption
   - age
+  - pdf
   - passwords
 resource: "docs/ENCRYPTION.md"
 last_updated: "2026-09-16"
@@ -13,92 +14,86 @@ source_sync: "manual"
 
 # Encryption And Decryption
 
-Encrypt makes a standard `.age` copy of any file, locked with a password. Decrypt turns that copy back into the original bytes. This is file encryption. It does not add a password that a PDF reader understands; that is a separate planned feature using qpdf.
+The Encrypt tab offers two protections. *Password-protected PDF* adds an open password that any PDF reader asks for. *Encrypted file* wraps any file in a standard `.age` container. The Decrypt tab reverses both: a locked PDF becomes an unlocked copy, an `.age` file becomes its original bytes.
 
 Owning files:
 
-- `crates/core/src/lib.rs` - `encrypt`, `decrypt`, `secret`, `copy_cancel`
-- `apps/desktop/src-tauri/src/main.rs` - password length check, suggested names
-- `apps/desktop/src/main.tsx` - Encrypt and Decrypt tabs, password fields
+- `crates/core/src/crypto.rs` - `encrypt`, `decrypt` (age)
+- `crates/core/src/pdf.rs` - `protect`, `unlock`
+- `crates/core/src/job.rs` - `Action::Protect`, `Unlock`, `Encrypt`, `Decrypt`
+- `apps/desktop/src-tauri/src/main.rs` - `check_password`, mode to action mapping
+- `apps/desktop/src/App.tsx` - the tabs and password fields
 
-## Format
+## Password-protected PDF
 
-- Library: the Rust `age` crate, version 0.11.
-- Recipient: `Encryptor::with_user_passphrase`, which uses scrypt. Output is readable by `age`, `rage`, and other compatible tools with the same password.
-- Streaming: input is copied in 64 KiB chunks through the age writer. Memory use does not grow with file size.
-- Suggested name: `<original name>.age`. Decrypt suggests `restored-<name without .age>`.
+- Eligible rows: PDFs that do not already need a password. Other rows show `PDF required` or `Already protected` and are skipped.
+- Password: 12 characters or more, confirmed. The same password protects every selected PDF in the batch.
+- Output: `<stem>-protected.pdf`, AES-256. Details in [`PDF_TOOLS.md`](PDF_TOOLS.md).
+- The Convert tab can do the same as part of a conversion with its *Password-protect PDFs* switch, including for a combined document.
 
-## Encrypt flow
+## Encrypted file
+
+- Library: the Rust `age` crate 0.11, passphrase recipient (scrypt). Output opens in `age`, `rage` and compatible tools with the same password.
+- Streaming in 64 KiB chunks; memory does not grow with file size.
+- Any file is eligible, including PDFs and files the app cannot otherwise read.
+- Output: `<full name>.age`.
+
+## Decrypt
+
+- A locked PDF (detected from the file, shown as `locked` in the queue) is unlocked with `pdf::unlock` to `<stem>-unlocked.pdf`. Wrong password: `Incorrect password or damaged PDF.`
+- An `.age` file is restored to `restored-<name without .age>`. Only password-encrypted age files are supported; a file encrypted to a public key fails with a clear message.
+- Rows that are neither show `No password set` or `Unsupported file`.
+- Files with different passwords belong in different batches: one password field serves the whole batch, and an item whose password does not match fails while the others succeed.
+
+## Password rules
+
+The 12-character minimum counts Unicode scalar values on both sides: `chars().count()` in Rust and `[...password].length` in TypeScript. Backend validation in `check_password` runs before any dialog opens; the UI also disables the action until the rule holds. Decrypt requires a non-empty password.
+
+## Flows
 
 ```mermaid
 flowchart TD
-  A[Password 12+ chars and confirmed in UI] --> B[process_file encrypt]
-  B --> C{12+ chars in backend?}
-  C -- no --> X[Err]
-  C -- yes --> D[Save dialog]
-  D --> E[Open source read-only]
-  E --> F[Create temp beside destination]
-  F --> G[age writer over temp, copy with cancel checks]
-  G --> H[writer.finish]
-  H --> I[commit: sync and persist_noclobber]
+  A[Encrypt tab] --> B{protection type}
+  B -- PDF --> C[pdf::protect per row: AES-256, temp beside destination, no overwrite]
+  B -- File --> D[crypto::encrypt per row: age scrypt stream, cancel checks per chunk]
+  E[Decrypt tab] --> F{row kind}
+  F -- locked PDF --> G[pdf::unlock: load with password, drop encryption, prune, write]
+  F -- .age --> H[crypto::decrypt: header check, authenticate, stream plaintext]
 ```
 
-The 12-character rule counts Unicode scalar values on both sides: `chars().count()` in Rust and `[...password].length` in TypeScript. A shorter password is rejected before any dialog opens.
-
-## Decrypt flow
-
-```mermaid
-flowchart TD
-  A[Non-empty password in UI] --> B[process_file decrypt]
-  B --> C[Save dialog]
-  C --> D[Open source, parse age header]
-  D -- not age --> X1[Err: not a supported age file]
-  D -- not scrypt --> X2[Err: password-encrypted only]
-  D -- ok --> E[Build scrypt identity from password]
-  E --> F{decrypt header with identity}
-  F -- fails --> X3[Err: incorrect password or damaged file]
-  F -- ok --> G[Create temp beside destination]
-  G --> H[Stream plaintext to temp with cancel checks]
-  H -- truncated or tampered --> X4[Err from reader, temp dropped]
-  H -- complete --> I[commit]
-```
-
-The password check happens at the header, so a wrong password fails fast. Truncation or tampering in the body fails during the stream. In both cases the temp file is dropped and nothing appears at the destination.
-
-The backend does not enforce a minimum length for decrypt. The UI requires at least one character.
+In every path the temp file is dropped on error or cancel, and nothing appears at the destination.
 
 ## Error messages
 
 | Situation | Message |
 | --- | --- |
-| Password under 12 chars on encrypt | `Use a password with at least 12 characters.` |
+| New password under 12 chars | `Use a password with at least 12 characters.` |
+| Decrypt with empty password | `Enter the password.` |
 | Source is not an age file | `Not a supported age encrypted file.` |
 | Age file uses a key recipient | `This build supports password-encrypted age files only.` |
-| Wrong password or damaged header | `Incorrect password or damaged encrypted file.` |
+| Wrong age password or damaged header | `Incorrect password or damaged encrypted file.` |
+| Wrong PDF password | `Incorrect password or damaged PDF.` |
+| PDF has no password | `This PDF has no password.` |
+| PDF already protected | `This PDF already has a password. Unlock it first, then protect it again.` |
 | Destination exists | `Output already exists. Choose another name.` |
 | Cancelled | `Cancelled. No output was saved.` |
 
 ## UI behaviour
 
-- Encrypt shows a password field with Show/Hide, a confirmation field, and the hint `At least 12 characters. Keep it safe; there is no password recovery.` A live `Passwords do not match.` error appears once the confirmation differs.
-- Decrypt shows one password field and accepts only files ending in `.age`.
-- Show/Hide toggles both fields together.
-- Both fields are cleared after every job and on every tab change.
-- The info box explains the difference between file encryption and a PDF-open password.
+- Encrypt shows the protection choice, then a password field with Show/Hide, a confirmation field, the hint `Use at least 12 characters. A longer phrase is easier to remember.`, a live `Passwords do not match.` error and the warning that the password cannot be recovered.
+- Decrypt shows one password field and the info card `Unlock your documents`.
+- Show/Hide toggles both fields together. Fields are cleared after every job and on every tab change.
 
 ## Tests
 
-`crypto_roundtrip_wrong_password_and_truncation` in `crates/core/src/lib.rs` covers:
-
-- byte-identical round trip including NUL and non-UTF-8 bytes
-- wrong password leaves no output
-- encrypting onto an existing `.age` destination fails
-- a truncated ciphertext fails and leaves no partial plaintext
+- `crypto::tests::crypto_roundtrip_wrong_password_and_truncation` - byte-identical round trip, wrong password leaves no output, existing destination refused, truncated ciphertext refused
+- `pdf::tests::protect_unlock_and_merge` - protect, wrong password, unlock, double protection refused
+- `job::tests::builtin_routes_run_without_office` - encrypt through the batch runner and a protected merge
 
 ## Not implemented
 
-- PDF password protection and removal (qpdf)
 - key-based age recipients
 - folder or archive encryption
 - a generic output name to hide the original file name
+- owner passwords and permission flags on PDFs
 - secure erase of temp files on SSDs
