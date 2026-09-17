@@ -8,7 +8,7 @@ tags:
   - cancellation
   - file-safety
 resource: "docs/JOB_LIFECYCLE.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 source_sync: "manual"
 ---
 
@@ -60,6 +60,7 @@ Checks before `busy` flips never block a later call.
 | encrypt, protection `file` | `Encrypt` |
 | decrypt, PDF input | `Unlock` |
 | decrypt, other input | `Decrypt` |
+| clean, DOCX/PDF/image input | `Clean` (no password, no conversion options) |
 
 Page breaks travel per item (`page_breaks`); orientation, margins and spacing are batch-wide. The UI only sends rows that pass the mode's eligibility check, and the core rechecks content (image sniffing, age header, PDF lock status) so a wrong file still fails safely.
 
@@ -98,6 +99,7 @@ For a combined document all items are converted first (each reported `Working` t
 | Unlock | `<stem>-unlocked.pdf` |
 | Encrypt | `<full name>.age` |
 | Decrypt | `restored-<name without .age>` |
+| Clean | `<stem>-clean.docx`, `<stem>-clean.pdf`, or `<stem>-clean.png` for photos |
 | Merge | the *Output filename* field, `.pdf` added if missing |
 
 ## Cancellation
@@ -128,3 +130,12 @@ Each change emits `batch-progress` with `{ index, status, detail, output }`, whe
 - No progress inside one item; LibreOffice stages show only `Working…`.
 - A batch that is force-killed leaves its work folder until the next start.
 - Items run sequentially; there is no parallel image pool yet.
+
+## Standards export completion
+
+Standards jobs export, optionally embed attachments, then run local veraPDF on the
+final work file before committing. Validation failure preserves sources and leaves
+no output; `ItemReport.validation` carries failed rules. PDF/UA passing machine
+checks remains marked as requiring human review. Cancellation covers validation,
+and ordinary no-overwrite commit behavior is retained. Preview is a page-content
+preview, not final validation or attachment inspection.

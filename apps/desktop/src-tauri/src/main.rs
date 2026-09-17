@@ -27,6 +27,7 @@ struct Entry {
 }
 
 struct AppState {
+    inspections: Mutex<HashMap<String, String>>,
     files: Mutex<HashMap<String, Entry>>,
     next: AtomicU64,
     busy: AtomicBool,
@@ -56,6 +57,7 @@ struct Asset {
 struct EngineStatus {
     ready: bool,
     office: Option<OfficeEngine>,
+    validator: bool,
 }
 
 #[derive(Serialize)]
@@ -92,6 +94,38 @@ struct BatchRequest {
     encryption: String,
     #[serde(default)]
     image: ImageSettings,
+    #[serde(default)]
+    attachments: Vec<AttachmentRequest>,
+}
+
+#[derive(Deserialize)]
+struct AttachmentRequest {
+    id: String,
+    #[serde(default)]
+    relationship: converter_core::pdf_standards::Relationship,
+    #[serde(default)]
+    description: String,
+}
+
+fn resolve_attachments(
+    state: &AppState,
+    request: &BatchRequest,
+) -> Result<Vec<converter_core::pdf_standards::Attachment>, String> {
+    if request.attachments.len() > converter_core::pdf_standards::MAX_ATTACHMENTS {
+        return Err("At most 20 attachments are allowed.".into());
+    }
+    request
+        .attachments
+        .iter()
+        .map(|a| {
+            let (source, _) = lookup(state, &a.id)?;
+            Ok(converter_core::pdf_standards::Attachment {
+                source,
+                relationship: a.relationship,
+                description: a.description.clone(),
+            })
+        })
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -187,6 +221,7 @@ fn engine_status(state: State<'_, AppState>) -> EngineStatus {
     EngineStatus {
         ready: engines.is_some(),
         office: engines.and_then(|e| e.office),
+        validator: converter_core::validation::Validator::detect().is_some(),
     }
 }
 
@@ -241,6 +276,12 @@ fn lookup(state: &AppState, id: &str) -> Result<(PathBuf, InputKind), String> {
 fn parse_format(value: Option<&str>) -> Result<OutputFormat, String> {
     match value.unwrap_or("pdf") {
         "pdf" => Ok(OutputFormat::Pdf),
+        "pdfa1b" => Ok(OutputFormat::Pdfa1b),
+        "pdfa2b" => Ok(OutputFormat::Pdfa2b),
+        "pdfa3b" => Ok(OutputFormat::Pdfa3b),
+        "pdfa4f" => Ok(OutputFormat::Pdfa4f),
+        "pdfua1" => Ok(OutputFormat::Pdfua1),
+        "pdfa4" => Ok(OutputFormat::Pdfa4),
         "docx" => Ok(OutputFormat::Docx),
         "txt" => Ok(OutputFormat::Txt),
         "html" => Ok(OutputFormat::Html),
@@ -250,8 +291,35 @@ fn parse_format(value: Option<&str>) -> Result<OutputFormat, String> {
 }
 
 fn build_tasks(state: &AppState, request: &BatchRequest) -> Result<Vec<Task>, String> {
+    if !request.attachments.is_empty()
+        && (request.mode != "convert"
+            || request.merge
+            || request.items.iter().any(|item| {
+                !parse_format(item.format.as_deref()).is_ok_and(|f| f.supports_attachments())
+            }))
+    {
+        return Err("Attachments require separate PDF/A-3b or PDF/A-4f outputs.".into());
+    }
+    if request.mode == "convert"
+        && request.attachments.is_empty()
+        && request
+            .items
+            .iter()
+            .any(|item| item.format.as_deref() == Some("pdfa4f"))
+    {
+        return Err("PDF/A-4f requires at least one attachment.".into());
+    }
     let mut tasks = Vec::new();
     for item in &request.items {
+        if request.mode == "convert"
+            && (request.merge || request.protect)
+            && parse_format(item.format.as_deref())?.is_standard_pdf()
+        {
+            return Err(
+                "PDF/A or PDF/UA export cannot be combined with merging or password protection."
+                    .into(),
+            );
+        }
         let (source, kind) = lookup(state, &item.id)?;
         let name = source
             .file_name()
@@ -259,6 +327,8 @@ fn build_tasks(state: &AppState, request: &BatchRequest) -> Result<Vec<Task>, St
             .to_string_lossy()
             .into_owned();
         let action = match request.mode.as_str() {
+            "clean" if converter_core::clean::supported(kind) => Action::Clean,
+            "clean" => return Err("Cleaning supports DOCX, PDF and static photos.".into()),
             "convert" => Action::Convert {
                 format: if request.merge {
                     OutputFormat::Pdf
@@ -324,6 +394,14 @@ async fn run_batch(
         cancel_preview(&state);
         let _gate = state.preview_gate.lock().await;
         let tasks = build_tasks(&state, &request)?;
+        if tasks
+            .iter()
+            .any(|t| matches!(t.action, Action::Convert {format} if format.is_standard_pdf()))
+            && converter_core::validation::Validator::detect().is_none()
+        {
+            return Err("Local veraPDF and Java are required for PDF/A and PDF/UA export.".into());
+        }
+        let attachments = resolve_attachments(&state, &request)?;
         let password = (!request.password.is_empty()).then(|| secret(request.password.clone()));
         let batch = Batch {
             tasks,
@@ -332,6 +410,7 @@ async fn run_batch(
             password,
             protect: request.protect,
             image: request.image.clone(),
+            attachments,
         };
         let destination = if batch.merge {
             let mut name = request.merge_name.trim().to_string();
@@ -426,6 +505,105 @@ async fn outline(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn inspect_pdf(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<converter_core::pdf_security::SecurityReport, String> {
+    let (source, kind) = lookup(&state, &id)?;
+    if kind != InputKind::Pdf {
+        return Err("Select a PDF file.".into());
+    }
+    let _gate = state.preview_gate.lock().await;
+    if state.busy.load(Ordering::SeqCst) {
+        return Err("A job is running".into());
+    }
+    state
+        .inspections
+        .lock()
+        .map_err(|_| "File state unavailable")?
+        .remove(&id);
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        converter_core::pdf_security::inspect(&source)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if let Some(fingerprint) = &report.fingerprint {
+        state
+            .inspections
+            .lock()
+            .map_err(|_| "File state unavailable")?
+            .insert(id, fingerprint.clone());
+    }
+    Ok(report)
+}
+
+#[tauri::command]
+async fn open_inspected_pdf(
+    state: State<'_, AppState>,
+    id: String,
+    fingerprint: String,
+) -> Result<tauri::ipc::Response, String> {
+    let (source, kind) = lookup(&state, &id)?;
+    let _gate = state.preview_gate.lock().await;
+    if state.busy.load(Ordering::SeqCst) {
+        return Err("A job is running".into());
+    }
+    if kind != InputKind::Pdf
+        || state
+            .inspections
+            .lock()
+            .map_err(|_| "File state unavailable")?
+            .get(&id)
+            != Some(&fingerprint)
+    {
+        return Err("Inspect this PDF before opening the preview.".into());
+    }
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        converter_core::pdf_security::reviewed_bytes(&source, &fingerprint)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+async fn validate_pdf(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    format: String,
+) -> Result<converter_core::validation::ValidationReport, String> {
+    let (source, kind) = lookup(&state, &id)?;
+    if kind != InputKind::Pdf {
+        return Err("Select an existing PDF to validate.".into());
+    }
+    let profile = parse_format(Some(&format))?;
+    if !profile.is_standard_pdf() {
+        return Err("Select a PDF/A or PDF/UA validation profile.".into());
+    }
+    let validator = converter_core::validation::Validator::detect()
+        .ok_or("Local veraPDF and Java were not found.")?;
+    if state.busy.swap(true, Ordering::SeqCst) {
+        return Err("A job is already running".into());
+    }
+    state.cancel.store(false, Ordering::SeqCst);
+    cancel_preview(&state);
+    let _gate = state.preview_gate.lock().await;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        validator
+            .validate(&source, profile, &state.cancel)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string());
+    state.busy.store(false, Ordering::SeqCst);
+    result?
+}
+
 /// PDF bytes of the real output for the preview panel. A newer preview or a
 /// batch cancels the one in flight; the gate runs them one at a time.
 #[tauri::command]
@@ -437,6 +615,11 @@ async fn preview(
 ) -> Result<tauri::ipc::Response, String> {
     let (source, kind) = lookup(&state, &id)?;
     let target = parse_format(Some(&format))?;
+    if kind == InputKind::Pdf || converter_core::inspect(&source) == InputKind::Pdf {
+        return Err(
+            "Use the security inspector to review this PDF before opening its preview.".into(),
+        );
+    }
     if state.busy.load(Ordering::SeqCst) {
         return Err("A job is already running".into());
     }
@@ -471,6 +654,7 @@ fn main() {
                 .unwrap_or_else(|_| std::env::temp_dir().join("doc-converter"))
                 .join("lo-profile");
             app.manage(AppState {
+                inspections: Mutex::new(HashMap::new()),
                 files: Mutex::new(HashMap::new()),
                 next: AtomicU64::new(0),
                 busy: AtomicBool::new(false),
@@ -505,7 +689,10 @@ fn main() {
             cancel_job,
             refresh_outputs,
             outline,
-            preview
+            inspect_pdf,
+            open_inspected_pdf,
+            preview,
+            validate_pdf
         ])
         .run(tauri::generate_context!())
         .expect("Unable to start Doc Converter");
@@ -514,6 +701,30 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archival_requests_are_not_silently_normalized_to_plain_pdf() {
+        let state = AppState {
+            inspections: Mutex::new(HashMap::new()),
+            files: Mutex::new(HashMap::new()),
+            next: AtomicU64::new(1),
+            busy: AtomicBool::new(false),
+            cancel: AtomicBool::new(false),
+            engines: Mutex::new(None),
+            preview_gate: tauri::async_runtime::Mutex::new(()),
+            preview_cancel: Mutex::new(None),
+        };
+        for format in ["pdfa1b", "pdfa2b", "pdfa3b", "pdfa4", "pdfua1"] {
+            assert!(parse_format(Some(format)).unwrap().is_standard_pdf());
+            for (protect, merge) in [(true, false), (false, true)] {
+                let result =
+                    build_tasks(&state, &request("convert", &[format], protect, merge, ""));
+                assert!(result
+                    .unwrap_err()
+                    .contains("PDF/A or PDF/UA export cannot"));
+            }
+        }
+    }
 
     fn request(
         mode: &str,
@@ -540,11 +751,13 @@ mod tests {
             protect,
             encryption: "file".into(),
             image: ImageSettings::default(),
+            attachments: Vec::new(),
         }
     }
 
     #[test]
     fn password_is_required_only_when_a_pdf_gets_protected() {
+        assert!(check_password(&request("clean", &["pdf", "docx"], true, true, "")).is_ok());
         assert!(check_password(&request("convert", &["txt", "html"], true, false, "")).is_ok());
         assert!(check_password(&request("convert", &["txt", "pdf"], true, false, "")).is_err());
         assert!(check_password(&request(

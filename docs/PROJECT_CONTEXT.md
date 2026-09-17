@@ -7,7 +7,7 @@ tags:
   - agent-entry
   - project-context
 resource: "docs/PROJECT_CONTEXT.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 source_sync: "manual"
 ---
 
@@ -35,6 +35,7 @@ Doc Converter is a Windows-first Tauri 2 desktop app. It processes local files i
 - PDF open passwords (AES-256) on conversion, on existing PDFs, and their removal
 - images (PNG, JPEG, BMP, WebP, TIFF) to PNG, JPG, WebP or a PDF page, with resize and quality
 - password-based `.age` encryption of any file and authenticated restore
+- **Clean before sharing**: DOCX review/hidden-content removal, PDF metadata removal, photo metadata removal into PNG copies
 - a multi-select queue with drag and drop, per-row formats, per-row statuses and progress
 
 A License tab exists only as a placeholder. Nothing is simulated.
@@ -51,6 +52,7 @@ Highest-signal files:
 - `crates/core/src/pdf.rs` - passwords, unlock, merge, text, image pages
 - `crates/core/src/layout.rs`, `docx.rs`, `text.rs` - page layout for text and Word sources
 - `crates/core/src/images.rs`, `crypto.rs`, `inspect.rs` - images, age, input detection
+- `crates/core/src/clean.rs`, `clean/word.rs` - privacy cleaning and DOCX package sanitization
 - `apps/desktop/src-tauri/src/main.rs` - Tauri commands, app state, dialogs, job gating, engine startup
 - `apps/desktop/src/App.tsx` - the whole UI; `api.ts` the contract; `Preview.tsx` PDF.js
 - `apps/desktop/src-tauri/tauri.conf.json` and `capabilities/default.json` - CSP, window, permissions
@@ -62,9 +64,11 @@ Highest-signal files:
 | Engines and LibreOffice isolation | [`ENGINES.md`](ENGINES.md) |
 | Convert tab, matrix, routes, merge | [`DOCUMENT_CONVERSION.md`](DOCUMENT_CONVERSION.md) |
 | Page layout, page breaks, preview | [`PAGE_LAYOUT.md`](PAGE_LAYOUT.md) |
+| Archival PDF/A-1b, PDF/A-2b, PDF/A-3b, PDF/A-4, PDF/A-4f and PDF/UA-1 export | [`PDF_A_EXPORT.md`](PDF_A_EXPORT.md) |
 | PDF passwords, unlock, merge, text, image pages | [`PDF_TOOLS.md`](PDF_TOOLS.md) |
 | Encrypt and Decrypt tabs | [`ENCRYPTION.md`](ENCRYPTION.md) |
 | Images tab | [`IMAGE_CONVERSION.md`](IMAGE_CONVERSION.md) |
+| Clean before sharing | [`CLEAN_BEFORE_SHARING.md`](CLEAN_BEFORE_SHARING.md) |
 | Batches, destinations, cancellation | [`JOB_LIFECYCLE.md`](JOB_LIFECYCLE.md) |
 | Commands, events, drag and drop | [`IPC_AND_FILE_ACCESS.md`](IPC_AND_FILE_ACCESS.md) |
 | Queue table | [`FILE_QUEUE.md`](FILE_QUEUE.md) |

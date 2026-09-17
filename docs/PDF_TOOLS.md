@@ -7,13 +7,13 @@ tags:
   - encryption
   - merge
 resource: "docs/PDF_TOOLS.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 source_sync: "manual"
 ---
 
 # PDF Tools
 
-Everything PDF-specific is in `crates/core/src/pdf.rs` on top of the `lopdf` crate. Nothing here needs LibreOffice.
+The PDF operations on this page use `crates/core/src/pdf.rs` on top of the `lopdf` crate and do not need LibreOffice. [PDF/A export](PDF_A_EXPORT.md) uses the Office adapter separately.
 
 ## Open password
 
@@ -73,6 +73,6 @@ In `crates/core/src/pdf.rs`:
 ## Not implemented
 
 - Page ranges, page reordering and rotation in the UI (the core can rotate by setting `Rotate`, but no command exposes it).
-- PDF/A output, watermarks, compression and metadata cleaning.
+- PDF/A conversion of existing PDFs, watermarks and compression. Archival export of Office/HTML sources is covered in [PDF/A Export](PDF_A_EXPORT.md).
 - Owner passwords and permission flags.
 - Bookmarks per merged source.

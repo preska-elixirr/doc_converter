@@ -7,7 +7,7 @@ tags:
   - tauri
   - file-access
 resource: "docs/IPC_AND_FILE_ACCESS.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 source_sync: "manual"
 ---
 
@@ -51,7 +51,7 @@ Runs a batch; see [`JOB_LIFECYCLE.md`](JOB_LIFECYCLE.md). `result` is `saved`, `
 
 ```typescript
 type BatchRequest = {
-  mode: 'convert' | 'images' | 'encrypt' | 'decrypt';
+  mode: 'convert' | 'images' | 'clean' | 'encrypt' | 'decrypt';
   items: { id: string; format?: string; page_breaks?: number[] }[];
   merge: boolean;              // convert only
   merge_name: string;
@@ -119,3 +119,12 @@ When `isTauri()` is false, the page shows a notice and disables Add and the prim
 - listing directories
 - deleting or overwriting files
 - opening the output after save
+
+### PDF standards validation and attachments
+
+`validate_pdf(id, format) -> ValidationReport` checks a registered PDF against a
+supported standard locally. It shares the busy flag, preview gate and cancellation
+with batches. `BatchRequest.attachments` contains registered file IDs, relationship
+and description; raw attachment paths and validator executable paths are not IPC
+parameters. `engine_status` adds `validator: bool`; each `ItemReport` adds nullable
+`validation` with profile, passed flag, human-review flag and bounded rule descriptions.

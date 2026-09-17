@@ -22,39 +22,93 @@ pub struct OfficeEngine {
 }
 
 /// What LibreOffice should write.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target {
     pub ext: &'static str,
     /// `--convert-to` argument, for example `txt:Text (encoded):UTF8`.
-    pub convert_to: &'static str,
+    pub convert_to: std::borrow::Cow<'static, str>,
 }
 
 impl Target {
+    pub fn standard(kind: crate::InputKind, format: crate::OutputFormat) -> Target {
+        use crate::{InputKind as K, OutputFormat as F};
+        let filter = match kind {
+            K::Pptx => "impress_pdf_Export",
+            K::Xlsx => "calc_pdf_Export",
+            _ => "writer_pdf_Export",
+        };
+        let version = match format {
+            F::Pdfa1b => 1,
+            F::Pdfa2b => 2,
+            F::Pdfa3b => 3,
+            F::Pdfa4 | F::Pdfa4f => 4,
+            _ => 17,
+        };
+        let options = serde_json::json!({
+            "SelectPdfVersion": {"type":"long", "value":version.to_string()},
+            "PDFUACompliance": {"type":"boolean", "value":format == F::Pdfua1},
+            "UseTaggedPDF": {"type":"boolean", "value":true},
+            "ExportBookmarks": {"type":"boolean", "value":true},
+            "EncryptFile": {"type":"boolean", "value":false},
+            "IsAddStream": {"type":"boolean", "value":false}
+        });
+        Target {
+            ext: "pdf",
+            convert_to: format!("pdf:{filter}:{options}").into(),
+        }
+    }
+    /// Explicit application filter and archival version; never rely on profile defaults.
+    pub fn archival(kind: crate::InputKind, pdfa4: bool) -> Target {
+        macro_rules! filter {
+            ($name:literal, $version:literal) => {
+                concat!(
+                    "pdf:",
+                    $name,
+                    ":{\"SelectPdfVersion\":{\"type\":\"long\",\"value\":\"",
+                    $version,
+                    "\"}}"
+                )
+            };
+        }
+        use crate::InputKind;
+        let convert_to = match (kind, pdfa4) {
+            (InputKind::Pptx, false) => filter!("impress_pdf_Export", "2"),
+            (InputKind::Pptx, true) => filter!("impress_pdf_Export", "4"),
+            (InputKind::Xlsx, false) => filter!("calc_pdf_Export", "2"),
+            (InputKind::Xlsx, true) => filter!("calc_pdf_Export", "4"),
+            (_, false) => filter!("writer_pdf_Export", "2"),
+            (_, true) => filter!("writer_pdf_Export", "4"),
+        };
+        Target {
+            ext: "pdf",
+            convert_to: convert_to.into(),
+        }
+    }
     pub const PDF: Target = Target {
         ext: "pdf",
-        convert_to: "pdf",
+        convert_to: std::borrow::Cow::Borrowed("pdf"),
     };
     pub const DOCX: Target = Target {
         ext: "docx",
-        convert_to: "docx",
+        convert_to: std::borrow::Cow::Borrowed("docx"),
     };
     pub const TXT: Target = Target {
         ext: "txt",
-        convert_to: "txt:Text (encoded):UTF8",
+        convert_to: std::borrow::Cow::Borrowed("txt:Text (encoded):UTF8"),
     };
     /// Writer HTML with images embedded as data URIs, so one file holds everything.
     pub const HTML: Target = Target {
         ext: "html",
-        convert_to: "html:HTML (StarWriter):EmbedImages",
+        convert_to: std::borrow::Cow::Borrowed("html:HTML (StarWriter):EmbedImages"),
     };
     /// Calc HTML export; the job pipeline embeds its image sidecars afterwards.
     pub const HTML_CALC: Target = Target {
         ext: "html",
-        convert_to: "html",
+        convert_to: std::borrow::Cow::Borrowed("html"),
     };
     pub const MD: Target = Target {
         ext: "md",
-        convert_to: "md:Markdown",
+        convert_to: std::borrow::Cow::Borrowed("md:Markdown"),
     };
 }
 
@@ -72,6 +126,89 @@ fn file_url(path: &Path) -> String {
     url
 }
 
+/// Sanity-check LibreOffice's output declaration, not full ISO conformance.
+#[cfg(test)]
+pub(crate) fn check_archival_output(path: &Path, pdfa4: bool) -> Result<()> {
+    check_standard_output(
+        path,
+        if pdfa4 {
+            crate::OutputFormat::Pdfa4
+        } else {
+            crate::OutputFormat::Pdfa2b
+        },
+    )
+}
+
+pub(crate) fn check_standard_output(path: &Path, format: crate::OutputFormat) -> Result<()> {
+    let pdf_error = |e: lopdf::Error| message(format!("Could not check PDF/A output: {e}"));
+    let doc = lopdf::Document::load(path).map_err(pdf_error)?;
+    if doc.is_encrypted() || doc.get_pages().is_empty() {
+        return Err(message(
+            "LibreOffice returned an encrypted or empty PDF/A output.",
+        ));
+    }
+    let catalog = doc.catalog().map_err(pdf_error)?;
+    let metadata = catalog
+        .get(b"Metadata")
+        .and_then(|v| v.as_reference())
+        .map_err(pdf_error)?;
+    let stream = doc
+        .get_object(metadata)
+        .and_then(|v| v.as_stream())
+        .map_err(pdf_error)?;
+    let bytes = if stream.dict.has(b"Filter") {
+        stream.decompressed_content().map_err(pdf_error)?
+    } else {
+        stream.content.clone()
+    };
+    let xml = std::str::from_utf8(&bytes).map_err(|_| message("Invalid PDF/A metadata."))?;
+    let mut reader = quick_xml::NsReader::from_str(xml);
+    let mut part = String::new();
+    let mut conformance = String::new();
+    loop {
+        use quick_xml::{events::Event, name::ResolveResult};
+        let (ns, event) = reader
+            .read_resolved_event()
+            .map_err(|e| message(e.to_string()))?;
+        match event {
+            Event::Start(ref element) if matches!(ns, ResolveResult::Bound(n) if n.as_ref() == if format == crate::OutputFormat::Pdfua1 { "http://www.aiim.org/pdfua/ns/id/" } else { "http://www.aiim.org/pdfa/ns/id/" }) =>
+            {
+                let local = element.local_name();
+                if local.as_ref() == "part" || local.as_ref() == "conformance" {
+                    let value = reader
+                        .read_text(element.name())
+                        .map_err(|e| message(e.to_string()))?
+                        .trim()
+                        .to_string();
+                    if local.as_ref() == "part" {
+                        part = value;
+                    } else {
+                        conformance = value;
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    use crate::OutputFormat as F;
+    let (expected_part, expected_level) = match format {
+        F::Pdfa1b => ("1", Some("B")),
+        F::Pdfa2b => ("2", Some("B")),
+        F::Pdfa3b => ("3", Some("B")),
+        F::Pdfa4 => ("4", None),
+        F::Pdfa4f => ("4", Some("F")),
+        F::Pdfua1 => ("1", None),
+        _ => return Err(message("Not a PDF standard profile.")),
+    };
+    if part != expected_part || expected_level.is_some_and(|level| conformance != level) {
+        return Err(message(
+            "LibreOffice did not declare the requested PDF/A standard. No output was saved.",
+        ));
+    }
+    Ok(())
+}
+
 const PROFILE_XCU: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 <item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item>
@@ -82,6 +219,20 @@ const PROFILE_XCU: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 "#;
 
 impl OfficeEngine {
+    pub fn supports_pdfa(&self) -> bool {
+        let mut parts = self
+            .version
+            .strip_prefix("LibreOffice ")
+            .unwrap_or("")
+            .split('.');
+        match (
+            parts.next().and_then(|v| v.parse::<u32>().ok()),
+            parts.next().and_then(|v| v.parse::<u32>().ok()),
+        ) {
+            (Some(major), Some(minor)) => (major, minor) >= (25, 8),
+            _ => false,
+        }
+    }
     /// Places to look, most specific first.
     pub fn candidates() -> Vec<PathBuf> {
         let mut out = Vec::new();
@@ -210,7 +361,7 @@ impl OfficeEngine {
         if let Some(filter) = infilter {
             cmd.arg(format!("--infilter={filter}"));
         }
-        cmd.arg("--convert-to").arg(target.convert_to);
+        cmd.arg("--convert-to").arg(target.convert_to.as_ref());
         cmd.arg("--outdir").arg(outdir);
         for input in inputs {
             cmd.arg(input);
@@ -253,7 +404,7 @@ impl OfficeEngine {
 }
 
 /// Waits for the child, polling the cancel flag. Returns captured stderr.
-fn wait(mut child: Child, timeout: Duration, cancel: &AtomicBool) -> Result<String> {
+pub(crate) fn wait(mut child: Child, timeout: Duration, cancel: &AtomicBool) -> Result<String> {
     #[cfg(windows)]
     let job = job::JobObject::new(&child);
     let stderr = child.stderr.take();
@@ -294,7 +445,7 @@ fn wait(mut child: Child, timeout: Duration, cancel: &AtomicBool) -> Result<Stri
 }
 
 #[cfg(windows)]
-mod job {
+pub(crate) mod job {
     use std::os::windows::io::AsRawHandle;
     use std::process::Child;
     use windows_sys::Win32::{
@@ -353,6 +504,46 @@ mod job {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archival_filters_and_declaration_checks() {
+        for (kind, filter) in [
+            (crate::InputKind::Docx, "writer_pdf_Export"),
+            (crate::InputKind::Xlsx, "calc_pdf_Export"),
+            (crate::InputKind::Pptx, "impress_pdf_Export"),
+        ] {
+            for (pdfa4, version) in [(false, "2"), (true, "4")] {
+                let target = Target::archival(kind, pdfa4);
+                let prefix = format!("pdf:{filter}:");
+                let options: serde_json::Value =
+                    serde_json::from_str(target.convert_to.strip_prefix(&prefix).unwrap()).unwrap();
+                assert_eq!(options["SelectPdfVersion"]["value"], version);
+                assert_eq!(options["SelectPdfVersion"]["type"], "long");
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("output.pdf");
+        let pixels = image::DynamicImage::new_rgb8(2, 2);
+        let bytes = crate::pdf::image_pdf(&[pixels], 85).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(check_archival_output(&path, false).is_err());
+        for (namespace, part, conformance, expected) in [
+            ("http://www.aiim.org/pdfa/ns/id/", "2", "B", true),
+            ("http://www.aiim.org/pdfa/ns/id/", "2", "A", false),
+            ("http://www.aiim.org/pdfa/ns/id/", "4", "B", false),
+            ("urn:wrong", "2", "B", false),
+        ] {
+            let mut doc = lopdf::Document::load_mem(&bytes).unwrap();
+            let xmp = format!("<x xmlns:a='{namespace}'><a:part>{part}</a:part><a:conformance>{conformance}</a:conformance></x>");
+            let metadata = doc.add_object(lopdf::Stream::new(
+                lopdf::Dictionary::new(),
+                xmp.into_bytes(),
+            ));
+            doc.catalog_mut().unwrap().set("Metadata", metadata);
+            doc.save(&path).unwrap();
+            assert_eq!(check_archival_output(&path, false).is_ok(), expected);
+        }
+    }
 
     #[test]
     fn file_url_escapes_spaces() {

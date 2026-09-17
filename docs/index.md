@@ -7,7 +7,7 @@ tags:
   - index
   - okf-lite
 resource: "docs/index.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 source_sync: "manual"
 ---
 
@@ -33,8 +33,10 @@ Use this file as a discovery map, not as a required reading list. Start with `PR
 - [Document Conversion](DOCUMENT_CONVERSION.md) - the capability matrix, routes per format pair, merging, and PDF protection on output.
 - [Page Layout](PAGE_LAYOUT.md) - orientation, margins, spacing, page breaks for DOCX and text, and the real-output preview.
 - [PDF Tools](PDF_TOOLS.md) - AES-256 passwords, unlock, merge, text extraction, image pages.
+- [PDF/A Export](PDF_A_EXPORT.md) - archival PDF/A-1b, PDF/A-2b, PDF/A-3b, PDF/A-4, PDF/A-4f and PDF/UA-1, supported inputs and validation limits.
 - [Encryption And Decryption](ENCRYPTION.md) - protected PDFs and `.age` files, and their reversal.
 - [Image Conversion](IMAGE_CONVERSION.md) - PNG, JPEG, BMP, WebP, TIFF to PNG, JPG, WebP or PDF.
+- [Clean Before Sharing](CLEAN_BEFORE_SHARING.md) - DOCX review/hidden-content removal, PDF metadata removal, photo GPS/camera removal, and limits.
 - [File Queue](FILE_QUEUE.md) - the multi-select table, eligibility per mode, statuses.
 - [Workspace UI](WORKSPACE_UI.md) - tabs, columns, settings per mode, validation, result bar.
 
@@ -44,7 +46,7 @@ Use this file as a discovery map, not as a required reading list. Start with `PR
 
 ## Build, Test, And Planning
 
-- [Build And Verification](BUILD_AND_VERIFICATION.md) - toolchain, LibreOffice for development, commands, the sixteen tests, and the smoke check.
+- [Build And Verification](BUILD_AND_VERIFICATION.md) - toolchain, LibreOffice for development, commands, regression tests, and the smoke check.
 - [Application Plan](APPLICATION_PLAN.md) - proposed architecture, milestones, release gates, and licensing model.
 
 ## Metadata Convention

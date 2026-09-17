@@ -7,7 +7,7 @@ tags:
   - api-catalog
   - agent-entry
 resource: "docs/methods_report/README.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 doc_version: "2.0.0"
 source_sync: "manual"
 ---
@@ -20,7 +20,7 @@ This catalog tracks every public Rust item in `crates/core`, every Tauri command
 
 ## Sections
 
-- [01 Converter Core](01_converter_core.md) - `converter-core` crate: `lib`, `inspect`, `capability`, `crypto`, `images`, `pdf`, `office`, `text`, `layout`, `docx`, `job`
+- [01 Converter Core](01_converter_core.md) - `converter-core` crate: `lib`, `inspect`, `capability`, `crypto`, `images`, `pdf`, `office`, `text`, `layout`, `docx`, `clean`, `job`
 - [02 Desktop Commands](02_desktop_commands.md) - `AppState`, request and asset shapes, the seven commands, two events, startup
 - [03 Frontend](03_frontend.md) - TypeScript types, invoke wrappers, `App` state and derived flags, `PdfPreview`
 
@@ -36,3 +36,7 @@ There is no automated drift checker yet. Compare by reading the source; the core
 ## Format
 
 Rust entries use Rust signatures in fenced blocks with a trailing comment for the contract. Frontend entries use TypeScript.
+
+PDF standards APIs now include `pdf_standards::{Attachment, Relationship, embed}`,
+`validation::{Validator, ValidationReport}`, the `validate_pdf` command and the
+`PdfStandards`/`ValidationDetails` components. See the corresponding catalog entries.

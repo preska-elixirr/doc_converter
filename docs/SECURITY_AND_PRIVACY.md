@@ -7,7 +7,7 @@ tags:
   - privacy
   - csp
 resource: "docs/SECURITY_AND_PRIVACY.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 source_sync: "manual"
 ---
 
@@ -65,6 +65,15 @@ This is process separation, not a sandbox. A malicious document can still exploi
 - Wrong password, truncation, cancellation, or an engine failure leaves no partial file at the destination.
 - The batch work folder is removed when the batch ends; stale folders are removed at the next start, except folders another running instance still holds a lock on.
 
+## Metadata cleaning
+
+The **Clean before sharing** tab removes supported DOCX, PDF and photo metadata
+locally. It creates new copies and accepts supported DOCX revisions, with explicit
+failure for structural revisions it cannot safely accept. Metadata cleaning is
+not redaction: PDF annotations/attachments and DOCX embedded files/photos are
+outside its scope. Photo outputs are fresh PNGs; PDF outputs are fully rewritten.
+See [Clean before sharing](CLEAN_BEFORE_SHARING.md) for precise coverage and limits.
+
 ## Temporary data
 
 Some data touches disk briefly inside `%TEMP%\doc-converter-*`: edited DOCX copies, LibreOffice output, per-document PDFs before a merge, HTML bridges, preview PDFs. Deleting a file on an SSD does not guarantee secure erasure. Decrypted plaintext from the Decrypt tab streams directly to the temp file beside the chosen destination, as before.
@@ -98,3 +107,19 @@ Do not reintroduce a custom container; the mockup's `.dcenc` was replaced on pur
 - Licensing is not wired, so paid-feature gating does not exist.
 
 The [application plan](APPLICATION_PLAN.md) sections 4, 7, 8, and 12 describe the intended fixes.
+
+## PDF standards validator and attachments
+
+Local Java/veraPDF receives a generated PDF or an explicitly selected existing PDF;
+no service upload is used. Runtime setup is an explicit developer script; the app
+never downloads executables. Validation runs with a 512 MiB Java heap, 120-second
+wall timeout, 8 MiB report limit and cancellation/job-object cleanup. Reports are
+stored in a temporary file and removed after parsing. No custom validator paths
+or profile files are accepted from IPC. See [PDF Standards](PDF_A_EXPORT.md).
+
+Attachments intentionally preserve their bytes, filenames, descriptions and source
+modification dates. Rust caps count and bytes, rejects duplicate names and refuses
+to replace existing embedded files. Adding XML is not e-invoice certification.
+PDF/UA validation reports never imply that human accessibility review is complete.
+The preview uses PDF.js 6; the removed `isEvalSupported` option no longer exists in
+that version's implementation or types. Existing CSP restrictions remain in place.

@@ -7,7 +7,7 @@ tags:
   - libreoffice
   - typst
 resource: "docs/ENGINES.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 source_sync: "manual"
 ---
 
@@ -108,3 +108,7 @@ msiexec /a "$env:TEMP\lo\LibreOffice_26.8.0.3_Machine_X64_msi_en-US.msi" /qn TAR
 - A warm, persistent LibreOffice instance or LibreOfficeKit; every conversion is a new process.
 - Memory limits on the job object; only the kill-on-close flag is set.
 - Sandboxing beyond the private profile and job object.
+
+## PDF standards and validator
+
+The Office adapter selects explicit PDF/A-1b, 2b, 3b, 4 or PDF/UA-1 options. Rust builds PDF/A-4f attachments after base PDF/A-4 export. Local veraPDF Greenfield and Java validate the final result before saving. Detection, setup, bounds, licensing and accessibility limits are documented in [PDF Standards](PDF_A_EXPORT.md).

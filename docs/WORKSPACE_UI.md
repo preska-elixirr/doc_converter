@@ -7,7 +7,7 @@ tags:
   - react
   - workspace
 resource: "docs/WORKSPACE_UI.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 source_sync: "manual"
 ---
 
@@ -21,9 +21,9 @@ The interface is one React tree: `App` in `apps/desktop/src/App.tsx`, the PDF pr
 flowchart TD
   H[Header: brand, tagline, shield badge, language and size button] --> M[Main]
   M --> I[Intro: eyebrow, title, subtitle]
-  I --> N[Tabs: Convert, Images, Encrypt, Decrypt, License]
+  I --> N[Tabs: Convert, Images, Clean before sharing, Encrypt, Decrypt, License]
   N --> W{active tab}
-  W -- convert, images, encrypt, decrypt --> G[Two columns]
+  W -- convert, images, clean, encrypt, decrypt --> G[Two columns]
   G --> L[Left: queue, then page layout in Convert]
   G --> S[Right: settings aside]
   W -- license --> P[Placeholder card]
@@ -54,6 +54,7 @@ UI scale uses the webview zoom (`getCurrentWebview().setZoom`), which scales the
 | --- | --- | --- |
 | Convert | `convert` | Document conversion, merge, PDF protection, page layout |
 | Images | `images` | Image conversion |
+| Clean before sharing | `clean` | Metadata removal into new DOCX, PDF or PNG copies |
 | Encrypt | `encrypt` | Protected PDF or `.age` file |
 | Decrypt | `decrypt` | Unlock PDF or restore `.age` |
 | License | `license` | Placeholder card; no controls |
@@ -64,6 +65,7 @@ Switching a tab clears both password fields, the error, the result bar, and fini
 
 - **Convert**: batch format select; *Password-protect PDFs* switch; *Combine into one document* switch with the output filename; page orientation (As is, Portrait, Landscape). See [`DOCUMENT_CONVERSION.md`](DOCUMENT_CONVERSION.md).
 - **Images**: format select, quality slider, resize select, transparency note. See [`IMAGE_CONVERSION.md`](IMAGE_CONVERSION.md).
+- **Clean before sharing**: plain-language metadata explanation, per-format removal details, revision acceptance and output limitations. Action: **Save cleaned copies**. See [`CLEAN_BEFORE_SHARING.md`](CLEAN_BEFORE_SHARING.md).
 - **Encrypt**: protection type radio cards. **Decrypt**: info card. See [`ENCRYPTION.md`](ENCRYPTION.md).
 - **Password block** (Encrypt, Decrypt, or Convert with protection on and a PDF output among the selected rows or a merge): password with Show/Hide; confirm field, mismatch error and warning except in Decrypt.
 - **Destination card**: `Choose a location when saving.`, or the folder wording when several files are selected.
@@ -81,7 +83,7 @@ The label is `Convert N files`, `Combine into one PDF`, `Convert images`, `Prote
 
 ## Page layout panel
 
-Shown in Convert when a selected row targets PDF or DOCX or when combining. Contents: preview document select or the merge order list, margins and spacing selects, the outline with a checkbox per block, *Reset page breaks*, the count badge, and the rendered pages. See [`PAGE_LAYOUT.md`](PAGE_LAYOUT.md).
+Shown in Convert when a selected row targets PDF, PDF/A or DOCX or when combining. Contents: preview document select or the merge order list, margins and spacing selects, the outline with a checkbox per block, *Reset page breaks*, the count badge, and the rendered pages. See [`PAGE_LAYOUT.md`](PAGE_LAYOUT.md).
 
 ## Result bar
 
@@ -122,3 +124,11 @@ CSS variables on `:root`, taken from the mockup:
 | `--red` | `#a33b2f` |
 
 Additions beyond the mockup: `.topbar-right`, `.local-badge .shield`, `.prefs-button` and `.prefs-panel`, `.status.failed`, `.status.working`, `.outline` and `.outline-row`, canvas-based `.page-sheet`, `.merge-order`, the three-button `.orientation` grid, `.file-type.age`, and `.dragging` for the window-wide drop highlight.
+
+## PDF standards controls
+
+Convert provides all six standard profiles, local-validator readiness, a separate
+attachment list, relationships/descriptions and validation of one existing selected
+PDF. Per-row validation details show failed rules or pass status; PDF/UA success
+still includes human-review guidance. Attachment and validator requirements block
+invalid submissions, while Rust independently enforces them. See [PDF Standards](PDF_A_EXPORT.md).

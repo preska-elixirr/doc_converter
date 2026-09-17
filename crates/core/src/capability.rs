@@ -8,6 +8,12 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     Pdf,
+    Pdfa1b,
+    Pdfa2b,
+    Pdfa3b,
+    Pdfa4,
+    Pdfa4f,
+    Pdfua1,
     Docx,
     Txt,
     Html,
@@ -15,8 +21,14 @@ pub enum OutputFormat {
 }
 
 impl OutputFormat {
-    pub const ALL: [OutputFormat; 5] = [
+    pub const ALL: [OutputFormat; 11] = [
         OutputFormat::Pdf,
+        OutputFormat::Pdfa1b,
+        OutputFormat::Pdfa2b,
+        OutputFormat::Pdfa3b,
+        OutputFormat::Pdfa4,
+        OutputFormat::Pdfa4f,
+        OutputFormat::Pdfua1,
         OutputFormat::Docx,
         OutputFormat::Txt,
         OutputFormat::Html,
@@ -24,7 +36,13 @@ impl OutputFormat {
     ];
     pub fn ext(self) -> &'static str {
         match self {
-            OutputFormat::Pdf => "pdf",
+            OutputFormat::Pdf
+            | OutputFormat::Pdfa1b
+            | OutputFormat::Pdfa2b
+            | OutputFormat::Pdfa3b
+            | OutputFormat::Pdfa4
+            | OutputFormat::Pdfa4f
+            | OutputFormat::Pdfua1 => "pdf",
             OutputFormat::Docx => "docx",
             OutputFormat::Txt => "txt",
             OutputFormat::Html => "html",
@@ -34,10 +52,39 @@ impl OutputFormat {
     pub fn label(self) -> &'static str {
         match self {
             OutputFormat::Pdf => "PDF",
+            OutputFormat::Pdfa1b => "PDF/A-1b",
+            OutputFormat::Pdfa2b => "PDF/A-2b",
+            OutputFormat::Pdfa3b => "PDF/A-3b",
+            OutputFormat::Pdfa4 => "PDF/A-4",
+            OutputFormat::Pdfa4f => "PDF/A-4f",
+            OutputFormat::Pdfua1 => "PDF/UA-1",
             OutputFormat::Docx => "DOCX",
             OutputFormat::Txt => "TXT",
             OutputFormat::Html => "HTML",
             OutputFormat::Md => "MD",
+        }
+    }
+    pub fn is_archival(self) -> bool {
+        matches!(
+            self,
+            Self::Pdfa1b | Self::Pdfa2b | Self::Pdfa3b | Self::Pdfa4 | Self::Pdfa4f
+        )
+    }
+    pub fn is_standard_pdf(self) -> bool {
+        self.is_archival() || self == Self::Pdfua1
+    }
+    pub fn supports_attachments(self) -> bool {
+        matches!(self, Self::Pdfa3b | Self::Pdfa4f)
+    }
+    pub fn validation_flavour(self) -> Option<&'static str> {
+        match self {
+            Self::Pdfa1b => Some("1b"),
+            Self::Pdfa2b => Some("2b"),
+            Self::Pdfa3b => Some("3b"),
+            Self::Pdfa4 => Some("4"),
+            Self::Pdfa4f => Some("4f"),
+            Self::Pdfua1 => Some("ua1"),
+            _ => None,
         }
     }
 }
@@ -79,6 +126,19 @@ pub fn route(kind: InputKind, format: OutputFormat, engines: &Engines) -> Route 
     use InputKind as K;
     use OutputFormat as F;
     let office = engines.office.as_ref();
+    if format.is_standard_pdf() {
+        if !matches!(kind, K::Docx | K::Odt | K::Pptx | K::Xlsx | K::Html) {
+            return Route::Unavailable(
+                "PDF/A and PDF/UA export support DOCX, ODT, PPTX, XLSX and HTML sources.".into(),
+            );
+        }
+        return match office {
+            Some(o) if o.supports_pdfa() => Route::Office,
+            _ => Route::Unavailable(
+                "PDF/A and PDF/UA export require LibreOffice 25.8 or later with a detected version.".into(),
+            ),
+        };
+    }
     let need_office = |route: Route| match office {
         Some(_) => route,
         None => Route::Unavailable(NO_OFFICE.to_string()),
@@ -160,6 +220,56 @@ pub fn capabilities(kind: InputKind, engines: &Engines) -> Vec<Availability> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archival_matrix_requires_supported_source_and_known_engine() {
+        for format in OutputFormat::ALL
+            .into_iter()
+            .filter(|f| f.is_standard_pdf())
+        {
+            assert!(matches!(
+                route(InputKind::Docx, format, &Engines::default()),
+                Route::Unavailable(_)
+            ));
+            for (version, supported) in [
+                ("LibreOffice", false),
+                ("LibreOffice 24.8", false),
+                ("LibreOffice 25.2", false),
+                ("LibreOffice 25.8", true),
+                ("LibreOffice 26.8.0.3", true),
+            ] {
+                let engines = Engines {
+                    office: Some(OfficeEngine {
+                        path: "unused".into(),
+                        profile: "unused".into(),
+                        markdown: true,
+                        version: version.into(),
+                    }),
+                };
+                for kind in [
+                    InputKind::Docx,
+                    InputKind::Odt,
+                    InputKind::Pptx,
+                    InputKind::Xlsx,
+                    InputKind::Html,
+                ] {
+                    assert_eq!(route(kind, format, &engines) == Route::Office, supported);
+                }
+                for kind in [
+                    InputKind::Pdf,
+                    InputKind::Txt,
+                    InputKind::Md,
+                    InputKind::Png,
+                    InputKind::Other,
+                ] {
+                    assert!(matches!(
+                        route(kind, format, &engines),
+                        Route::Unavailable(_)
+                    ));
+                }
+            }
+        }
+    }
 
     #[test]
     fn matrix_without_office() {

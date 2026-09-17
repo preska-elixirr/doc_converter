@@ -10,6 +10,7 @@ Everything the accepted mockup shows is implemented with real processing:
 - **Combine** selected documents into one PDF in a chosen order. **Password-protect** PDF output with AES-256.
 - **Page layout**: orientation, margins, paragraph spacing and page breaks on Word paragraphs or text blocks, with a preview of the real output.
 - **Images**: PNG, JPEG, BMP, WebP and TIFF to PNG, JPG, WebP or an A4 PDF page, with resize and quality.
+- **Clean before sharing**: remove DOCX properties, comments, supported tracked changes and hidden text; strip PDF metadata; remove photo GPS/camera metadata into lossless PNG copies. [Behavior and limits](docs/CLEAN_BEFORE_SHARING.md).
 - **Encrypt** a PDF with an open password or any file as a standard `.age` copy; **Decrypt** both.
 - **Queue**: many files per batch, drag and drop, per-file formats and statuses, live progress, cancellation.
 - **Languages and scale**: English and Croatian, switched from the `Aa` button in the header, plus a UI scale from 90 % to 150 %.
@@ -39,7 +40,7 @@ cargo test -p converter-core
 cargo fmt --all --check
 ```
 
-Eighteen core tests plus one in the desktop shell; the LibreOffice test skips with a message when no LibreOffice is found.
+The core and desktop suites include privacy-cleaning regression tests; Office integration tests skip with a message when no LibreOffice is found. See [verification](docs/BUILD_AND_VERIFICATION.md).
 
 ## Limits of this build
 

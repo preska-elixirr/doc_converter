@@ -3,9 +3,9 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 export type InputKind =
   | 'pdf' | 'docx' | 'odt' | 'pptx' | 'xlsx' | 'md' | 'html' | 'txt'
   | 'png' | 'jpg' | 'bmp' | 'webp' | 'tiff' | 'age' | 'other';
-export type OutputFormat = 'pdf' | 'docx' | 'txt' | 'html' | 'md';
+export type OutputFormat = 'pdf' | 'pdfa1b' | 'pdfa2b' | 'pdfa3b' | 'pdfa4' | 'pdfa4f' | 'pdfua1' | 'docx' | 'txt' | 'html' | 'md';
 export type ImageFormat = 'png' | 'jpg' | 'webp' | 'pdf';
-export type Mode = 'convert' | 'images' | 'encrypt' | 'decrypt' | 'license';
+export type Mode = 'convert' | 'images' | 'clean' | 'encrypt' | 'decrypt' | 'license';
 
 export type Availability = {
   format: OutputFormat;
@@ -37,8 +37,11 @@ export type Layout = {
 
 export type OutlineEntry = { index: number; kind: string; text: string };
 export type Status = 'queued' | 'working' | 'done' | 'failed' | 'cancelled';
-export type ItemReport = { index: number; status: Status; detail: string; output: string | null };
+export type ItemReport = { index: number; status: Status; detail: string; output: string | null; validation: ValidationReport | null };
+export type ValidationReport = { profile: string; passed: boolean; human_review_required: boolean; issues: string[] };
+export type AttachmentSelection = { id: string; name: string; relationship: 'Source' | 'Data' | 'Supplement' | 'Alternative' | 'Unspecified'; description: string };
 export type EngineStatus = {
+  validator: boolean;
   ready: boolean;
   office: { path: string; version: string; markdown: boolean } | null;
 };
@@ -53,13 +56,25 @@ export type BatchRequest = {
   protect: boolean;
   encryption: 'pdf' | 'file';
   image: { max_edge: number; quality: number };
+  attachments: Omit<AttachmentSelection, 'name'>[];
 };
 export type BatchOutcome = { result: 'saved' | 'cancelled' | 'nothing'; reports: ItemReport[] };
 export type AssetOutputs = { id: string; outputs: Availability[] };
+export type PdfSecurityReport = {
+  javascript: boolean | null;
+  embedded_files: boolean | null;
+  internet_links: boolean | null;
+  encryption: { algorithm: 'none' | 'rc4' | 'aes128' | 'aes256' | 'mixed' | 'unknown'; bits: number | null; revision: number | null };
+  status: 'complete' | 'locked' | 'incomplete' | 'unreadable' | 'too_large';
+  fingerprint: string | null;
+};
 
 export const desktop = isTauri();
 
 export const api = {
+  validatePdf: (id: string, format: OutputFormat) => invoke<ValidationReport>('validate_pdf', { id, format }),
+  inspectPdf: (id: string) => invoke<PdfSecurityReport>('inspect_pdf', { id }),
+  openInspectedPdf: (id: string, fingerprint: string) => invoke<ArrayBuffer>('open_inspected_pdf', { id, fingerprint }),
   pickFiles: () => invoke<Asset[]>('pick_files'),
   addPaths: (paths: string[]) => invoke<Asset[]>('add_paths', { paths }),
   engineStatus: () => invoke<EngineStatus>('engine_status'),

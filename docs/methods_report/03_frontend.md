@@ -7,7 +7,7 @@ tags:
   - typescript
   - react
 resource: "docs/methods_report/03_frontend.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 doc_version: "2.1.0"
 source_sync: "manual"
 ---
@@ -20,9 +20,9 @@ Package `doc-converter-desktop`, folder `apps/desktop/src/`. Dependencies: `reac
 
 ```typescript
 type InputKind = 'pdf' | 'docx' | 'odt' | 'pptx' | 'xlsx' | 'md' | 'html' | 'txt' | 'png' | 'jpg' | 'bmp' | 'webp' | 'tiff' | 'age' | 'other';
-type OutputFormat = 'pdf' | 'docx' | 'txt' | 'html' | 'md';
+type OutputFormat = 'pdf' | 'pdfa1b' | 'pdfa2b' | 'pdfa3b' | 'pdfa4' | 'pdfa4f' | 'pdfua1' | 'docx' | 'txt' | 'html' | 'md';
 type ImageFormat = 'png' | 'jpg' | 'webp' | 'pdf';
-type Mode = 'convert' | 'images' | 'encrypt' | 'decrypt' | 'license';
+type Mode = 'convert' | 'images' | 'clean' | 'encrypt' | 'decrypt' | 'license';
 type Availability = { format: OutputFormat; available: boolean; engine: string; reason: string | null };
 type Asset = { id: string; name: string; bytes: number; kind: InputKind; label: string; outputs: Availability[];
                pdf: { pages: number; encrypted: boolean } | null; image: { kind: InputKind; width: number; height: number } | null };
@@ -32,11 +32,11 @@ type Spacing = 'compact' | 'comfortable' | 'spacious';
 type Layout = { orientation: Orientation; margins: Margins; spacing: Spacing; page_breaks: number[] };
 type OutlineEntry = { index: number; kind: string; text: string };
 type Status = 'queued' | 'working' | 'done' | 'failed' | 'cancelled';
-type ItemReport = { index: number; status: Status; detail: string; output: string | null };
-type EngineStatus = { ready: boolean; office: { path: string; version: string; markdown: boolean } | null };
+type ItemReport = { index: number; status: Status; detail: string; output: string | null; validation: ValidationReport | null };
+type EngineStatus = { validator: boolean; ready: boolean; office: { path: string; version: string; markdown: boolean } | null };
 type BatchRequest = { mode: Exclude<Mode, 'license'>; items: { id: string; format?: string; page_breaks?: number[] }[];
                       merge: boolean; merge_name: string; layout: Layout; password: string; protect: boolean;
-                      encryption: 'pdf' | 'file'; image: { max_edge: number; quality: number } };
+                      encryption: 'pdf' | 'file'; image: { max_edge: number; quality: number }; attachments: Omit<AttachmentSelection, 'name'>[] };
 type BatchOutcome = { result: 'saved' | 'cancelled' | 'nothing'; reports: ItemReport[] };
 type AssetOutputs = { id: string; outputs: Availability[] };
 
@@ -150,3 +150,18 @@ Mounts `<App/>` under `React.StrictMode` into `#root` and imports `style.css`.
 ```
 
 `vite-env.d.ts` references `vite/client` for the `?url` asset import.
+
+### `PdfStandards.tsx`
+
+`STANDARD_FORMATS`, `standardPdf`, `attachmentFormat` and `formatLabel` define the
+six supported standards and their display labels. `PdfStandards` manages a native
+attachment picker, relationship/description editing, validator readiness and
+validation of one selected existing PDF. `ValidationDetails` renders pass/fail,
+failed rules, and a mandatory human-review note for PDF/UA-1.
+
+`AttachmentSelection` holds an opaque ID, display name, relationship and description.
+`BatchRequest.attachments` omits display names. `api.validatePdf(id, format)` invokes
+`validate_pdf`; `ValidationReport` contains `profile`, `passed`,
+`human_review_required`, and `issues`. Per-row progress carries the report.
+`archivalConflict` and `attachmentConflict` prevent invalid UI combinations;
+missing validator disables standards export. Rust remains authoritative.

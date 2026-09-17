@@ -24,6 +24,7 @@ pub enum Action {
     Unlock,
     Encrypt,
     Decrypt,
+    Clean,
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +64,7 @@ pub struct Batch {
     /// Convert mode: add `password` to every PDF output.
     pub protect: bool,
     pub image: ImageSettings,
+    pub attachments: Vec<crate::pdf_standards::Attachment>,
 }
 
 #[derive(Clone, Debug)]
@@ -87,6 +89,7 @@ pub struct ItemReport {
     pub status: Status,
     pub detail: String,
     pub output: Option<String>,
+    pub validation: Option<crate::validation::ValidationReport>,
 }
 
 /// Output file name for a task, used for save dialogs and folder outputs.
@@ -95,6 +98,7 @@ pub fn output_name(task: &Task, batch: &Batch) -> String {
     match &task.action {
         Action::Convert { format } => format!("{stem}.{}", format.ext()),
         Action::Image { format } => format!("{stem}.{format}"),
+        Action::Clean => format!("{stem}-clean.{}", crate::clean::extension(task.kind)),
         Action::Protect => format!("{stem}-protected.pdf"),
         Action::Unlock => format!("{stem}-unlocked.pdf"),
         Action::Encrypt => format!("{}.age", task.name),
@@ -168,11 +172,13 @@ fn office_infilter(kind: InputKind, engines: &Engines) -> Option<&'static str> {
 fn target_for(format: OutputFormat, kind: InputKind) -> Target {
     match format {
         OutputFormat::Pdf => Target::PDF,
+        format if format.is_standard_pdf() => Target::standard(kind, format),
         OutputFormat::Docx => Target::DOCX,
         OutputFormat::Txt => Target::TXT,
         OutputFormat::Html if kind == InputKind::Xlsx => Target::HTML_CALC,
         OutputFormat::Html => Target::HTML,
         OutputFormat::Md => Target::MD,
+        _ => unreachable!("standard PDF handled above"),
     }
 }
 
@@ -247,6 +253,16 @@ pub fn convert_document(
                 tag,
                 cancel,
             )?;
+            if format.is_standard_pdf() {
+                crate::office::check_standard_output(
+                    &produced,
+                    if format == OutputFormat::Pdfa4f {
+                        OutputFormat::Pdfa4
+                    } else {
+                        format
+                    },
+                )?;
+            }
             if kind == InputKind::Xlsx && format == OutputFormat::Html {
                 crate::html::embed_export_images(&produced, &out, cancel)?;
                 Ok(out)
@@ -345,7 +361,11 @@ pub fn preview_pdf(
         convert_document(
             source,
             kind,
-            OutputFormat::Pdf,
+            if target.is_standard_pdf() {
+                target
+            } else {
+                OutputFormat::Pdf
+            },
             layout,
             engines,
             work.path(),
@@ -459,12 +479,21 @@ fn run_item(
     engines: &Engines,
     work: &Path,
     cancel: &AtomicBool,
-) -> Result<PathBuf> {
+) -> Result<(PathBuf, Option<crate::validation::ValidationReport>)> {
+    let mut validation = None;
     let tag = format!("item{index}");
     let target = final_path(destination, &output_name(task, batch));
     match &task.action {
+        Action::Clean => crate::clean::clean(&task.source, &target, cancel)?,
         Action::Convert { format } => {
-            let produced = convert_document(
+            let validator = if format.is_standard_pdf() {
+                Some(crate::validation::Validator::detect().ok_or_else(|| {
+                    message("Local veraPDF and Java are required for PDF/A and PDF/UA export.")
+                })?)
+            } else {
+                None
+            };
+            let mut produced = convert_document(
                 &task.source,
                 task.kind,
                 *format,
@@ -474,6 +503,28 @@ fn run_item(
                 &tag,
                 cancel,
             )?;
+            if !batch.attachments.is_empty() {
+                let attached = work.join(format!("{tag}-attached.pdf"));
+                crate::pdf_standards::embed(
+                    &produced,
+                    &attached,
+                    *format,
+                    &batch.attachments,
+                    cancel,
+                )?;
+                produced = attached;
+            }
+            if format.is_standard_pdf() {
+                crate::office::check_standard_output(&produced, *format)?;
+                let report = validator
+                    .as_ref()
+                    .expect("standard profile validator")
+                    .validate(&produced, *format, cancel)?;
+                if !report.passed {
+                    return Err(crate::Error::Validation(report));
+                }
+                validation = Some(report);
+            }
             match (&batch.password, *format) {
                 (Some(password), OutputFormat::Pdf) if batch.protect => {
                     pdf::protect(&produced, &target, password, cancel)?
@@ -518,7 +569,7 @@ fn run_item(
             crate::decrypt(&task.source, &target, password, cancel)?
         }
     }
-    Ok(target)
+    Ok((target, validation))
 }
 
 fn run_merge(
@@ -539,6 +590,7 @@ fn run_merge(
             status: Status::Working,
             detail: "Converting to PDF…".into(),
             output: None,
+            validation: None,
         });
         let pdf = convert_document(
             &task.source,
@@ -556,6 +608,7 @@ fn run_merge(
             status: Status::Done,
             detail: "Ready to merge".into(),
             output: None,
+            validation: None,
         });
         parts.push(pdf);
     }
@@ -579,6 +632,71 @@ pub fn run(
     cancel: &AtomicBool,
     mut progress: impl FnMut(ItemReport),
 ) -> Vec<ItemReport> {
+    let attachment_error = if batch.attachments.len() > crate::pdf_standards::MAX_ATTACHMENTS {
+        Some("At most 20 attachments are allowed.")
+    } else if !batch.attachments.is_empty()
+        && (batch.merge
+            || batch.tasks.iter().any(
+                |t| !matches!(t.action, Action::Convert {format} if format.supports_attachments()),
+            ))
+    {
+        Some("Attachments can only be added to separate PDF/A-3b or PDF/A-4f outputs.")
+    } else if batch.attachments.is_empty()
+        && batch.tasks.iter().any(|t| {
+            matches!(
+                t.action,
+                Action::Convert {
+                    format: OutputFormat::Pdfa4f
+                }
+            )
+        })
+    {
+        Some("PDF/A-4f requires at least one attachment.")
+    } else {
+        None
+    };
+    if let Some(detail) = attachment_error {
+        return batch
+            .tasks
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let report = ItemReport {
+                    index,
+                    status: Status::Failed,
+                    detail: detail.into(),
+                    output: None,
+                    validation: None,
+                };
+                progress(report.clone());
+                report
+            })
+            .collect();
+    }
+    if (batch.merge || batch.protect)
+        && batch
+            .tasks
+            .iter()
+            .any(|t| matches!(t.action, Action::Convert { format } if format.is_standard_pdf()))
+    {
+        return batch
+            .tasks
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let report = ItemReport {
+                    index,
+                    status: Status::Failed,
+                    detail: "PDF/A or PDF/UA export cannot be combined with merging or password protection."
+                        .into(),
+                    output: None,
+                    validation: None,
+                };
+                progress(report.clone());
+                report
+            })
+            .collect();
+    }
     let work = match work_dir() {
         Ok(dir) => dir,
         Err(e) => {
@@ -591,6 +709,7 @@ pub fn run(
                     status: Status::Failed,
                     detail: e.to_string(),
                     output: None,
+                    validation: None,
                 })
                 .collect()
         }
@@ -620,6 +739,7 @@ pub fn run(
                 status,
                 detail: detail.clone(),
                 output: output.clone(),
+                validation: None,
             };
             progress(report.clone());
             reports.push(report);
@@ -634,6 +754,7 @@ pub fn run(
                 status: Status::Cancelled,
                 detail: crate::CANCELLED.into(),
                 output: None,
+                validation: None,
             };
             progress(report.clone());
             reports.push(report);
@@ -644,6 +765,7 @@ pub fn run(
             status: Status::Working,
             detail: "Working…".into(),
             output: None,
+            validation: None,
         });
         let report = match run_item(
             task,
@@ -654,11 +776,18 @@ pub fn run(
             work.path(),
             cancel,
         ) {
-            Ok(path) => ItemReport {
+            Ok((path, validation)) => ItemReport {
                 index,
                 status: Status::Done,
-                detail: "Saved".into(),
+                detail: if validation.as_ref().is_some_and(|v| v.human_review_required) {
+                    "Saved; PDF/UA machine checks passed. Human review required.".into()
+                } else if validation.is_some() {
+                    "Saved; PDF/A validation passed.".into()
+                } else {
+                    "Saved".into()
+                },
                 output: Some(path.to_string_lossy().into_owned()),
+                validation,
             },
             Err(e) if e.to_string() == crate::CANCELLED => {
                 cancelled = true;
@@ -667,13 +796,22 @@ pub fn run(
                     status: Status::Cancelled,
                     detail: e.to_string(),
                     output: None,
+                    validation: None,
                 }
             }
+            Err(crate::Error::Validation(validation)) => ItemReport {
+                index,
+                status: Status::Failed,
+                detail: "PDF validation failed. No output was saved.".into(),
+                output: None,
+                validation: Some(validation),
+            },
             Err(e) => ItemReport {
                 index,
                 status: Status::Failed,
                 detail: e.to_string(),
                 output: None,
+                validation: None,
             },
         };
         progress(report.clone());
@@ -706,11 +844,299 @@ mod tests {
             layout: Layout::default(),
             password: None,
             protect: false,
+            attachments: Vec::new(),
             image: ImageSettings {
                 max_edge: 0,
                 quality: 85,
             },
         }
+    }
+
+    #[test]
+    fn all_pdf_standards_and_attachments_validate_locally() {
+        use crate::pdf_standards::{Attachment, Relationship};
+        let dir = tempfile::tempdir().unwrap();
+        let Some(office) = crate::office::OfficeEngine::detect(&dir.path().join("profile")) else {
+            eprintln!("SKIP: LibreOffice unavailable");
+            return;
+        };
+        let Some(validator) = crate::validation::Validator::detect() else {
+            eprintln!("SKIP: local veraPDF/Java unavailable");
+            return;
+        };
+        if !office.supports_pdfa() {
+            eprintln!("SKIP: LibreOffice 25.8+ required");
+            return;
+        }
+        let engines = Engines {
+            office: Some(office),
+        };
+        let html = dir.path().join("document.html");
+        let content = "<!DOCTYPE html><html lang=\"en-US\"><head><meta charset=\"utf-8\"><title>Accessible archive</title></head><body><h1>Accessible archive</h1><p>A short document with meaningful text.</p></body></html>";
+        std::fs::write(&html, content).unwrap();
+        let attachment = dir.path().join("račun & podatci.xml");
+        let attachment_bytes = b"<data><amount>42</amount></data>";
+        std::fs::write(&attachment, attachment_bytes).unwrap();
+        let out = dir.path().join("output");
+        std::fs::create_dir(&out).unwrap();
+        let cancel = AtomicBool::new(false);
+        for format in [
+            OutputFormat::Pdfa1b,
+            OutputFormat::Pdfa2b,
+            OutputFormat::Pdfa3b,
+            OutputFormat::Pdfa4,
+            OutputFormat::Pdfa4f,
+            OutputFormat::Pdfua1,
+        ] {
+            let mut b = batch(vec![task(html.clone(), Action::Convert { format })]);
+            if format.supports_attachments() {
+                b.attachments.push(Attachment {
+                    source: attachment.clone(),
+                    relationship: Relationship::Data,
+                    description: "Sample data, not a certified e-invoice".into(),
+                });
+            }
+            let reports = run(
+                &b,
+                &Destination::Folder(out.clone()),
+                &engines,
+                &cancel,
+                |_| {},
+            );
+            eprintln!("{}: {reports:?}", format.label());
+            assert_eq!(reports[0].status, Status::Done, "{reports:?}");
+            let report = reports[0].validation.as_ref().unwrap();
+            assert!(report.passed);
+            assert_eq!(report.human_review_required, format == OutputFormat::Pdfua1);
+            let saved = PathBuf::from(reports[0].output.as_ref().unwrap());
+            if format.supports_attachments() {
+                let doc = lopdf::Document::load(&saved).unwrap();
+                let af = doc
+                    .catalog()
+                    .unwrap()
+                    .get(b"AF")
+                    .unwrap()
+                    .as_array()
+                    .unwrap();
+                assert_eq!(af.len(), 1);
+                let file = doc.get_dictionary(af[0].as_reference().unwrap()).unwrap();
+                assert_eq!(
+                    file.get(b"AFRelationship").unwrap().as_name().unwrap(),
+                    b"Data"
+                );
+                let ef = file
+                    .get(b"EF")
+                    .unwrap()
+                    .as_dict()
+                    .unwrap()
+                    .get(b"F")
+                    .unwrap()
+                    .as_reference()
+                    .unwrap();
+                let stream = doc.get_object(ef).unwrap().as_stream().unwrap();
+                assert_eq!(&stream.content, attachment_bytes);
+            }
+            assert_eq!(std::fs::read_to_string(&html).unwrap(), content);
+            assert_eq!(std::fs::read(&attachment).unwrap(), attachment_bytes);
+        }
+        assert_eq!(std::fs::read_dir(&out).unwrap().count(), 6);
+        let image_path = dir.path().join("image.png");
+        image::RgbImage::from_pixel(10, 10, image::Rgb([100, 20, 10]))
+            .save(&image_path)
+            .unwrap();
+        let bad_html = dir.path().join("missing-alt.html");
+        let image_url = format!(
+            "file:///{}",
+            image_path.to_string_lossy().replace('\\', "/")
+        );
+        std::fs::write(&bad_html, format!("<html lang=\"en-US\"><head><title>Missing image description</title></head><body><h1>Photo</h1><img src=\"{image_url}\"></body></html>")).unwrap();
+        let rejected = run(
+            &batch(vec![task(
+                bad_html,
+                Action::Convert {
+                    format: OutputFormat::Pdfua1,
+                },
+            )]),
+            &Destination::Folder(out.clone()),
+            &engines,
+            &cancel,
+            |_| {},
+        );
+        assert_eq!(
+            rejected[0].status,
+            Status::Failed,
+            "Missing-alt export must fail: {rejected:?}"
+        );
+        assert!(
+            rejected[0]
+                .validation
+                .as_ref()
+                .is_some_and(|v| !v.passed && !v.issues.is_empty()),
+            "{rejected:?}"
+        );
+        assert!(!out.join("missing-alt.pdf").exists());
+        let ordinary = dir.path().join("ordinary.pdf");
+        std::fs::write(
+            &ordinary,
+            crate::pdf::image_pdf(&[image::DynamicImage::new_rgb8(3, 3)], 85).unwrap(),
+        )
+        .unwrap();
+        let report = validator
+            .validate(&ordinary, OutputFormat::Pdfa2b, &cancel)
+            .unwrap();
+        assert!(!report.passed);
+        assert!(!report.issues.is_empty());
+        assert!(validator
+            .validate(&ordinary, OutputFormat::Pdfa2b, &AtomicBool::new(true))
+            .unwrap_err()
+            .to_string()
+            .contains("Cancelled"));
+    }
+
+    #[test]
+    fn archival_rejects_merge_and_protection_before_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("paper.html");
+        std::fs::write(&input, "<html><body>Archive me</body></html>").unwrap();
+        let output = dir.path().join("out.pdf");
+        for format in [OutputFormat::Pdfa2b, OutputFormat::Pdfa4] {
+            for (merge, protect) in [(true, false), (false, true)] {
+                let mut b = batch(vec![task(input.clone(), Action::Convert { format })]);
+                b.merge = merge;
+                b.protect = protect;
+                let reports = run(
+                    &b,
+                    &Destination::File(output.clone()),
+                    &Engines::default(),
+                    &AtomicBool::new(false),
+                    |_| {},
+                );
+                assert_eq!(reports[0].status, Status::Failed);
+                assert!(reports[0].detail.contains("PDF/A"));
+                assert!(!output.exists());
+            }
+        }
+    }
+
+    #[test]
+    fn archival_exports_when_office_is_available() {
+        if crate::validation::Validator::detect().is_none() {
+            eprintln!("Local veraPDF/Java unavailable; skipping PDF/A integration");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let Some(office) = crate::office::OfficeEngine::detect(&dir.path().join("profile")) else {
+            eprintln!("LibreOffice not found; skipping PDF/A integration");
+            return;
+        };
+        if !office.supports_pdfa() {
+            eprintln!("LibreOffice 25.8+ required; skipping PDF/A integration");
+            return;
+        }
+        eprintln!("PDF/A integration using {}", office.version);
+        let engines = Engines {
+            office: Some(office),
+        };
+        let html = dir.path().join("paper.html");
+        let sheet = dir.path().join("sheet.xlsx");
+        std::fs::write(&html, "<!DOCTYPE html><html><body><h1>Archive sample</h1><p>Preserve this text.</p></body></html>").unwrap();
+        std::fs::write(
+            &sheet,
+            include_bytes!("../tests/fixtures/spreadsheet-with-image.xlsx"),
+        )
+        .unwrap();
+        let cancel = AtomicBool::new(false);
+        let out = dir.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        for source in [&html, &sheet] {
+            let original = std::fs::read(source).unwrap();
+            for format in [OutputFormat::Pdfa2b, OutputFormat::Pdfa4] {
+                let b = batch(vec![task(source.clone(), Action::Convert { format })]);
+                let reports = run(
+                    &b,
+                    &Destination::Folder(out.clone()),
+                    &engines,
+                    &cancel,
+                    |_| {},
+                );
+                assert_eq!(reports[0].status, Status::Done, "{reports:?}");
+                let saved = PathBuf::from(reports[0].output.as_ref().unwrap());
+                crate::office::check_archival_output(&saved, format == OutputFormat::Pdfa4)
+                    .unwrap();
+                assert!(crate::office::check_archival_output(
+                    &saved,
+                    format != OutputFormat::Pdfa4
+                )
+                .is_err());
+                let bytes = std::fs::read(&saved).unwrap();
+                let again = run(
+                    &b,
+                    &Destination::File(saved.clone()),
+                    &engines,
+                    &cancel,
+                    |_| {},
+                );
+                assert_eq!(again[0].status, Status::Failed);
+                assert_eq!(std::fs::read(&saved).unwrap(), bytes);
+                assert_eq!(std::fs::read(source).unwrap(), original);
+            }
+        }
+        assert_eq!(std::fs::read_dir(&out).unwrap().count(), 4);
+        let b = batch(vec![task(
+            html,
+            Action::Convert {
+                format: OutputFormat::Pdfa2b,
+            },
+        )]);
+        let reports = run(
+            &b,
+            &Destination::Folder(out),
+            &engines,
+            &AtomicBool::new(true),
+            |_| {},
+        );
+        assert_eq!(reports[0].status, Status::Cancelled);
+    }
+
+    #[test]
+    fn cleaning_batch_reports_failures_and_numbers_copies() {
+        let dir = tempfile::tempdir().unwrap();
+        let photo = dir.path().join("photo.jpg");
+        image::RgbImage::from_pixel(7, 5, image::Rgb([20, 40, 60]))
+            .save(&photo)
+            .unwrap();
+        let pdf = dir.path().join("paper.pdf");
+        let pixels = image::open(&photo).unwrap();
+        std::fs::write(&pdf, crate::pdf::image_pdf(&[pixels], 85).unwrap()).unwrap();
+        let unsupported = dir.path().join("notes.txt");
+        std::fs::write(&unsupported, "Keep me").unwrap();
+        let out = dir.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        let b = batch(vec![
+            task(photo.clone(), Action::Clean),
+            task(pdf.clone(), Action::Clean),
+            task(unsupported, Action::Clean),
+        ]);
+        let cancel = AtomicBool::new(false);
+        let destination = Destination::Folder(out.clone());
+        let reports = run(&b, &destination, &Engines::default(), &cancel, |_| {});
+        assert_eq!(
+            reports.iter().map(|r| r.status).collect::<Vec<_>>(),
+            vec![Status::Done, Status::Done, Status::Failed]
+        );
+        assert!(out.join("photo-clean.png").exists());
+        assert!(out.join("paper-clean.pdf").exists());
+        assert_eq!(
+            image::open(out.join("photo-clean.png")).unwrap().to_rgb8(),
+            image::open(photo).unwrap().to_rgb8()
+        );
+        run(&b, &destination, &Engines::default(), &cancel, |_| {});
+        assert!(out.join("photo-clean (2).png").exists());
+        assert!(out.join("paper-clean (2).pdf").exists());
+        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        let reports = run(&b, &destination, &Engines::default(), &cancel, |_| {});
+        assert!(reports.iter().all(|r| r.status == Status::Cancelled));
+        assert!(!out.join("photo-clean (3).png").exists());
     }
 
     #[test]

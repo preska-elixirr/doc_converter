@@ -5,6 +5,7 @@
 //! shared flag that operations check between stages.
 
 pub mod capability;
+pub mod clean;
 pub mod crypto;
 pub mod docx;
 mod html;
@@ -14,7 +15,10 @@ pub mod job;
 pub mod layout;
 pub mod office;
 pub mod pdf;
+pub mod pdf_security;
+pub mod pdf_standards;
 pub mod text;
+pub mod validation;
 
 use std::{
     fs::File,
@@ -33,6 +37,8 @@ pub use layout::{Layout, Margins, Orientation, Spacing};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("PDF validation failed: {0:?}")]
+    Validation(crate::validation::ValidationReport),
     #[error("{0}")]
     Message(String),
     #[error("File operation failed: {0}")]

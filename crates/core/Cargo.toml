@@ -6,10 +6,12 @@ edition = "2021"
 [dependencies]
 age = "0.11"
 base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 html5ever = "0.38"
 htmd = "0.5"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "webp", "tiff"] }
 lopdf = "0.45"
+md-5 = "0.11"
 markup5ever_rcdom = "0.38"
 percent-encoding = "2"
 pulldown-cmark = { version = "0.13", default-features = false }
@@ -17,6 +19,7 @@ quick-xml = "0.42"
 rand = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tempfile = "3"
 thiserror = "2"
 typst = "0.15"

@@ -8,6 +8,8 @@ import {
   type Spacing, type Status,
 } from './api';
 import { PdfPreview, type PreviewLabels } from './Preview';
+import { PdfStandards, ValidationDetails, STANDARD_FORMATS, standardPdf, attachmentFormat, formatLabel } from './PdfStandards';
+import type { AttachmentSelection, ValidationReport } from './api';
 import { detectLanguage, LANGUAGES, translate, translateDetail, translatePlural, type Key, type Language } from './i18n';
 
 type RowState = 'ready' | Status;
@@ -18,17 +20,19 @@ type Row = Asset & {
   state: RowState;
   detail: string;
   output?: string;
+  validation?: ValidationReport | null;
 };
 type Protection = 'pdf' | 'file';
 type ResultBar = { title: string; detail: string; done: number; total: number; finished: boolean };
 type T = (key: Key, vars?: Record<string, string | number>) => string;
 type TN = (key: Key, count: number, vars?: Record<string, string | number>) => string;
 
-const FORMATS: OutputFormat[] = ['pdf', 'docx', 'txt', 'html', 'md'];
+const FORMATS: OutputFormat[] = ['pdf', ...STANDARD_FORMATS, 'docx', 'txt', 'html', 'md'];
 const IMAGE_FORMATS: ImageFormat[] = ['png', 'jpg', 'webp', 'pdf'];
 const MODES: [Mode, string, Key][] = [
   ['convert', '↔', 'tab.convert'],
   ['images', '▧', 'tab.images'],
+  ['clean', '✧', 'tab.clean'],
   ['encrypt', '◇', 'tab.encrypt'],
   ['decrypt', '↳', 'tab.decrypt'],
   ['license', '◉', 'tab.license'],
@@ -64,6 +68,9 @@ function toRow(asset: Asset, imageTarget: ImageFormat): Row {
 /** Why a row cannot take part in the current mode, as a label key, or null when it can. */
 function blocked(row: Row, mode: Mode, protection: Protection): Key | null {
   switch (mode) {
+    case 'clean':
+      if (row.kind === 'pdf') return row.pdf?.encrypted ? 'reason.clean_locked' : null;
+      return row.kind === 'docx' || row.image ? null : 'reason.unsupported';
     case 'convert':
       return row.outputs.length ? null : 'reason.unsupported';
     case 'images':
@@ -114,6 +121,7 @@ export function App() {
   const [confirm, setConfirm] = useState('');
   const [show, setShow] = useState(false);
   const [batchFormat, setBatchFormat] = useState<OutputFormat>('pdf');
+  const [attachments, setAttachments] = useState<AttachmentSelection[]>([]);
   const [protect, setProtect] = useState(false);
   const [merge, setMerge] = useState(false);
   const [mergeName, setMergeName] = useState('Combined documents.pdf');
@@ -174,13 +182,16 @@ export function App() {
 
   const merging = mode === 'convert' && merge;
   const outputFor = useCallback(
-    (row: Row): string => (merging ? 'pdf' : mode === 'images' ? row.imageTarget : row.target),
+    (row: Row): string => (merging ? 'pdf' : mode === 'clean' ? (row.image ? 'png' : row.kind) : mode === 'images' ? row.imageTarget : row.target),
     [merging, mode],
   );
   const selected = useMemo(
     () => rows.filter((r) => r.selected && !blocked(r, mode, protection)),
     [rows, mode, protection],
   );
+  const hasArchival = mode === 'convert' && selected.some((r) => standardPdf(r.target));
+  const attachmentConflict = mode === 'convert' && ((attachments.length > 0 && (merging || selected.some((r) => !attachmentFormat(r.target)))) || (attachments.length === 0 && selected.some((r) => r.target === 'pdfa4f')));
+  const archivalConflict = hasArchival && (protect || merging);
   const skipped = rows.filter((r) => r.selected && blocked(r, mode, protection)).length;
   const needsPassword =
     mode === 'encrypt' || mode === 'decrypt' ||
@@ -188,10 +199,10 @@ export function App() {
   const passwordValid = !needsPassword || (mode === 'decrypt' ? password.length > 0 : [...password].length >= 12 && password === confirm);
   const targetsValid = mode !== 'convert' || merging ||
     selected.every((r) => r.outputs.some((o) => o.format === r.target && o.available));
-  const valid = desktop && selected.length > 0 && passwordValid && targetsValid && (!merging || mergeName.trim().length > 0);
-  const layoutVisible = mode === 'convert' && (merging || selected.some((r) => r.target === 'pdf' || r.target === 'docx'));
+  const valid = desktop && selected.length > 0 && passwordValid && targetsValid && !archivalConflict && !attachmentConflict && (!hasArchival || !!engine?.validator) && (!merging || mergeName.trim().length > 0);
+  const layoutVisible = mode === 'convert' && (merging || selected.some((r) => r.target === 'pdf' || standardPdf(r.target) || r.target === 'docx'));
   const previewCandidates = useMemo(
-    () => selected.filter((r) => merging || r.target === 'pdf' || r.target === 'docx'),
+    () => selected.filter((r) => merging || r.target === 'pdf' || standardPdf(r.target) || r.target === 'docx'),
     [selected, merging],
   );
   const layoutFor = useCallback(
@@ -232,7 +243,7 @@ export function App() {
         const id = batchIds.current[report.index];
         if (!id) return;
         setRows((current) => current.map((r) => (r.id === id
-          ? { ...r, state: report.status, detail: report.detail, output: report.output ?? undefined }
+          ? { ...r, state: report.status, detail: report.detail, output: report.output ?? undefined, validation: report.validation }
           : r)));
         setResult((current) => (current ? { ...current, title: '', detail: `${report.index + 1}|${report.detail}` } : current));
       }),
@@ -293,7 +304,7 @@ export function App() {
   }
 
   function update(id: string, patch: Partial<Row>) {
-    setRows((current) => current.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    setRows((current) => current.map((r) => (r.id === id ? { ...r, ...patch, validation: undefined } : r)));
     setResult(null);
   }
 
@@ -325,7 +336,7 @@ export function App() {
     const ids = batch.map((r) => r.id);
     batchIds.current = ids;
     setBusy(true); setError('');
-    setRows((current) => current.map((r) => (ids.includes(r.id) ? { ...r, state: 'queued', detail: 'Queued', output: undefined } : r)));
+    setRows((current) => current.map((r) => (ids.includes(r.id) ? { ...r, state: 'queued', detail: 'Queued', output: undefined, validation: undefined } : r)));
     setResult({ title: 'choose', detail: '', done: 0, total: ids.length, finished: false });
     const request: BatchRequest = {
       mode,
@@ -337,6 +348,7 @@ export function App() {
       protect: mode === 'convert' && protect,
       encryption: protection,
       image: { max_edge: imageSize, quality: imageQuality },
+      attachments: mode === 'convert' ? attachments.map(({ id, relationship, description }) => ({ id, relationship, description })) : [],
     };
     try {
       const outcome = await api.runBatch(request);
@@ -389,14 +401,17 @@ export function App() {
   const doneCount = rows.filter((r) => batchIds.current.includes(r.id) && (r.state === 'done' || r.state === 'failed' || r.state === 'cancelled')).length;
   const outputs = new Set(selected.map(outputFor));
   const summaryType = merging ? t('summary.combined')
-    : mode === 'convert' || mode === 'images' ? (outputs.size === 1 ? [...outputs][0].toUpperCase() : outputs.size ? t('summary.mixed') : '—')
+    : mode === 'clean' ? t('clean.copies')
+    : mode === 'convert' || mode === 'images' ? (outputs.size === 1 ? formatLabel([...outputs][0]) : outputs.size ? t('summary.mixed') : '—')
     : mode === 'encrypt' ? (protection === 'pdf' ? t('summary.protected') : t('summary.encrypted')) : mode === 'decrypt' ? t('summary.restored') : '';
   const actionLabel = busy ? t('action.working')
     : merging ? t('action.combine')
     : mode === 'convert' ? (selected.length ? tn('action.convert', selected.length) : t('action.convert_none'))
     : mode === 'images' ? t('action.images')
+    : mode === 'clean' ? t('action.clean')
     : mode === 'encrypt' ? (protection === 'pdf' ? t('action.protect') : t('action.encrypt')) : t('action.decrypt');
   const acceptedTypes = mode === 'images' ? t('drop.types.images')
+    : mode === 'clean' ? t('drop.types.clean')
     : mode === 'decrypt' ? t('drop.types.decrypt')
     : mode === 'encrypt' && protection === 'pdf' ? t('drop.types.pdf') : t('drop.types.documents');
   const lossy = selected.some((r) => ['jpg', 'webp', 'pdf'].includes(outputFor(r)));
@@ -460,17 +475,18 @@ export function App() {
                             <td><div className="file"><span className={`file-type ${row.kind}`}>{row.label}</span><div style={{ minWidth: 0 }}><span className="filename" title={row.output ?? row.name}>{row.name}</span><span className="file-meta">{meta}</span></div></div></td>
                             <td>
                               {merging ? <span className="output-label">{t('queue.merged')}</span>
+                                : mode === 'clean' ? <span className="output-label">{outputFor(row).toUpperCase()}</span>
                                 : mode === 'convert' ? (
                                   <select className="row-format" aria-label={t('queue.format_row', { name: row.name })} disabled={busy || !!reason} value={row.target} onChange={(e) => update(row.id, { target: e.target.value as OutputFormat })}>
-                                    {FORMATS.map((f) => { const a = row.outputs.find((o) => o.format === f); return <option key={f} value={f} disabled={!a?.available} title={a?.reason ?? ''}>{f.toUpperCase()}{a && !a.available ? ' ✕' : ''}</option>; })}
+                                    {FORMATS.map((f) => { const a = row.outputs.find((o) => o.format === f); return <option key={f} value={f} disabled={!a?.available} title={a?.reason ?? ''}>{formatLabel(f)}{a && !a.available ? ' ✕' : ''}</option>; })}
                                   </select>
                                 ) : mode === 'images' ? (
                                   <select className="row-format" aria-label={t('queue.format_row', { name: row.name })} disabled={busy || !!reason} value={row.imageTarget} onChange={(e) => update(row.id, { imageTarget: e.target.value as ImageFormat })}>
-                                    {IMAGE_FORMATS.map((f) => <option key={f} value={f}>{f.toUpperCase()}</option>)}
+                                    {IMAGE_FORMATS.map((f) => <option key={f} value={f}>{formatLabel(f)}</option>)}
                                   </select>
                                 ) : <span className="output-label">{mode === 'encrypt' ? (protection === 'pdf' ? t('queue.pdf_key') : t('queue.age')) : t('queue.original')}</span>}
                             </td>
-                            <td><span className={status.className} title={row.output ?? row.detail}>{status.text}</span></td>
+                            <td><span className={status.className} title={row.output ?? row.detail}>{status.text}</span>{row.validation && <ValidationDetails report={row.validation} language={language} />}</td>
                             <td><button className="remove" aria-label={t('queue.remove_row', { name: row.name })} disabled={busy} onClick={() => { setRows((c) => c.filter((r) => r.id !== row.id)); setResult(null); }}>×</button></td>
                           </tr>
                         );
@@ -521,16 +537,30 @@ export function App() {
             <aside className="settings" aria-labelledby="settings-title">
               <div className="settings-heading"><span className="step">{t('settings.step')}</span><div><h2 id="settings-title">{t(`settings.title.${mode}` as Key)}</h2><p>{t(`settings.sub.${mode}` as Key)}</p></div></div>
               <div className="settings-body">
+                {mode === 'clean' && (
+                  <div className="clean-settings">
+                    <div className="info"><strong>{t('clean.what')}</strong><p>{t('clean.definition')}</p></div>
+                    <p><strong>DOCX</strong></p><p className="hint">{t('clean.docx')}</p>
+                    <p><strong>{t('clean.photos_title')}</strong></p><p className="hint">{t('clean.photos')}</p>
+                    <p><strong>PDF</strong></p><p className="hint">{t('clean.pdf')}</p>
+                    <div className="separator"></div>
+                    <p className="hint">{t('clean.limits')}</p>
+                  </div>
+                )}
                 {mode === 'convert' && (
                   <div>
                     <label className="field-label" htmlFor="batch-format">{t('convert.batch')}</label>
-                    <select id="batch-format" disabled={busy || merging} value={batchFormat} onChange={(e) => { const f = e.target.value as OutputFormat; setBatchFormat(f); setRows((c) => c.map((r) => (r.selected && r.outputs.some((o) => o.format === f && o.available) ? { ...r, target: f } : r))); setResult(null); }}>{FORMATS.map((f) => <option key={f} value={f}>{f.toUpperCase()}</option>)}</select>
+                    <select id="batch-format" disabled={busy || merging} value={batchFormat} onChange={(e) => { const f = e.target.value as OutputFormat; setBatchFormat(f); setRows((c) => c.map((r) => (r.selected && r.outputs.some((o) => o.format === f && o.available) ? { ...r, target: f } : r))); setResult(null); }}>{FORMATS.map((f) => <option key={f} value={f}>{formatLabel(f)}</option>)}</select>
                     <p className="hint">{t('convert.batch_hint')}</p>
+                    <p className="hint">{t('convert.archival_hint')}</p>
+                    {archivalConflict && <p className="error" role="alert">{t('convert.archival_conflict')}</p>}
+                    {attachmentConflict && <p className="error" role="alert">{t('standards.attachment_conflict')}</p>}
+                    <PdfStandards language={language} busy={busy} setBusy={setBusy} validator={!!engine?.validator} attachments={attachments} onAttachments={setAttachments} pdfId={selected.length === 1 && selected[0].kind === 'pdf' ? selected[0].id : undefined} pdfName={selected.length === 1 && selected[0].kind === 'pdf' ? selected[0].name : undefined} />
                     <div className="separator"></div>
-                    <label className="switch-row"><span><strong>{t('convert.protect')}</strong><small>{t('convert.protect_small')}</small></span><input type="checkbox" role="switch" disabled={busy} checked={protect} onChange={(e) => setProtect(e.target.checked)} /></label>
+                    <label className="switch-row"><span><strong>{t('convert.protect')}</strong><small>{t('convert.protect_small')}</small></span><input type="checkbox" role="switch" disabled={busy || (hasArchival && !protect)} checked={protect} onChange={(e) => setProtect(e.target.checked)} /></label>
                     <p className="hint">{t('convert.protect_hint')}</p>
                     <div className="separator"></div>
-                    <label className="switch-row"><span><strong>{t('convert.merge')}</strong><small>{t('convert.merge_small')}</small></span><input type="checkbox" role="switch" disabled={busy} checked={merge} onChange={(e) => { setMerge(e.target.checked); setResult(null); }} /></label>
+                    <label className="switch-row"><span><strong>{t('convert.merge')}</strong><small>{t('convert.merge_small')}</small></span><input type="checkbox" role="switch" disabled={busy || (hasArchival && !merge)} checked={merge} onChange={(e) => { setMerge(e.target.checked); setResult(null); }} /></label>
                     {merging && (<div className="merge-name-field"><label className="field-label" htmlFor="merge-name">{t('convert.merge_name')}</label><input id="merge-name" type="text" disabled={busy} value={mergeName} onChange={(e) => setMergeName(e.target.value)} /><p className="hint">{t('convert.merge_hint')}</p></div>)}
                     <div className="separator"></div>
                     <span className="field-label">{t('convert.orientation')}</span>
@@ -545,7 +575,7 @@ export function App() {
                 {mode === 'images' && (
                   <div>
                     <label className="field-label" htmlFor="image-format">{t('images.format')}</label>
-                    <select id="image-format" disabled={busy} value={imageFormat} onChange={(e) => { const f = e.target.value as ImageFormat; setImageFormat(f); setRows((c) => c.map((r) => (r.selected && r.image ? { ...r, imageTarget: f } : r))); setResult(null); }}>{IMAGE_FORMATS.map((f) => <option key={f} value={f}>{f.toUpperCase()}</option>)}</select>
+                    <select id="image-format" disabled={busy} value={imageFormat} onChange={(e) => { const f = e.target.value as ImageFormat; setImageFormat(f); setRows((c) => c.map((r) => (r.selected && r.image ? { ...r, imageTarget: f } : r))); setResult(null); }}>{IMAGE_FORMATS.map((f) => <option key={f} value={f}>{formatLabel(f)}</option>)}</select>
                     <p className="hint">{t('images.format_hint')}</p>
                     <div className="separator"></div>
                     <label className="field-label" htmlFor="image-quality">{t('images.quality')} <output>{imageQuality}%</output></label>

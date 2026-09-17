@@ -8,7 +8,7 @@ tags:
   - drag-and-drop
   - ui
 resource: "docs/FILE_QUEUE.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 source_sync: "manual"
 ---
 
@@ -34,7 +34,7 @@ Owning files:
 | --- | --- |
 | Selected | Checkbox. The header checkbox selects all, shows indeterminate for a partial selection. |
 | Document | Type badge (from content detection, not extension), name, size, and extra facts: page count and `locked` for PDFs, `width × height` for images. |
-| Output | Convert: a per-row select of PDF, DOCX, TXT, HTML, MD; formats the file cannot reach are marked ✕ and disabled, with the reason as tooltip. `Merged PDF` when combining. Images: PNG, JPG, WEBP, PDF. Encrypt: `PDF + key` or `.age`. Decrypt: `Original`. The header reads `RESTORE TO` in Decrypt. |
+| Output | Convert: a per-row select of PDF, PDF/A-1b, PDF/A-2b, PDF/A-3b, PDF/A-4, PDF/A-4f, PDF/UA-1, DOCX, TXT, HTML, MD; formats the file cannot reach are marked ✕ and disabled, with the reason as tooltip. `Merged PDF` when combining. Images: PNG, JPG, WEBP, PDF. Encrypt: `PDF + key` or `.age`. Decrypt: `Original`. The header reads `RESTORE TO` in Decrypt. |
 | Status | See below. |
 | Remove | Drops the row. The backend keeps the path until exit. |
 
@@ -48,11 +48,15 @@ Owning files:
 | --- | --- | --- |
 | Convert | PDF, DOCX, ODT, PPTX, XLSX, MD, HTML, TXT | `Unsupported file` |
 | Images | PNG, JPG, BMP, WebP, TIFF | `Unsupported file` |
+| Clean before sharing | DOCX, unencrypted PDF, static images | `Decrypt before cleaning`, `Unsupported file`; decoder/revision failures are reported per item |
 | Encrypt, password-protected PDF | PDF without a password | `PDF required`, `Already protected` |
 | Encrypt, encrypted file | anything | none |
 | Decrypt | locked PDF, `.age` | `No password set`, `Unsupported file` |
 
 Kinds come from the backend's content sniffing, so a `.txt` that is really a PDF is treated as a PDF.
+
+Clean mode shows a fixed output label: DOCX, PDF or PNG for photos. It does not use
+the conversion format selector. The backend re-inspects the input when cleaning.
 
 ## Statuses
 

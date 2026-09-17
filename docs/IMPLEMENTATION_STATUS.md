@@ -6,11 +6,24 @@ tags:
   - status
   - milestone
 resource: "docs/IMPLEMENTATION_STATUS.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 source_sync: "manual"
 ---
 
-# Implementation status, 16 September 2026
+# Implementation status, 17 September 2026
+
+## Clean before sharing
+
+Added a dedicated English/Croatian tab for DOCX properties, comments, supported
+tracked changes and hidden text; PDF document/XMP metadata; and photo GPS/camera
+metadata into lossless PNG copies. Uses the existing batch, cancellation and
+no-overwrite flow without LibreOffice. Scope and deliberate refusals are recorded
+in [Clean before sharing](CLEAN_BEFORE_SHARING.md).
+
+Verification: all 29 core tests and the desktop-shell test passed; the frontend
+and embedded desktop builds succeeded. Formatting and diff checks passed. The
+cleaning tab was checked in a browser in English and Croatian; native dialog
+automation and arbitrary Word-document compatibility remain unverified.
 
 ## Second milestone delivered: the mockup's promises
 
@@ -57,8 +70,12 @@ XML cases and a real spreadsheet HTML export with an embedded image.
 - Installer, code signing, and shipping LibreOffice with its notices, or a guided prerequisite install.
 - Worker process isolation for the in-process engines; memory limits and network blocking for LibreOffice.
 - Licensing and activation (plan section 14).
-- PDF page ranges, rotation and per-source bookmarks in merges; PDF/A, watermarks, compression, metadata cleaning.
+- PDF page ranges, rotation and per-source bookmarks in merges; PDF/A conversion of existing PDFs, watermarks, compression.
 - ODT page-layout rewrites; spreadsheet print options; font substitution warnings.
 - OCR, HEIC/AVIF, colour management, metadata preservation options.
 
 See the root README for commands and current limits.
+
+## PDF/A export — 17 September 2026
+
+Convert now offers PDF/A-1b, PDF/A-2b, PDF/A-3b, PDF/A-4, PDF/A-4f and PDF/UA-1 for Office and HTML sources through LibreOffice 25.8+. Local veraPDF validates final outputs before commit. PDF/A-3b and PDF/A-4f support associated files; existing PDFs can be checked without modification. PDF/UA reports explicitly require human review. Backend safeguards refuse unsupported combinations. The validator/runtime are installed for development but still need production packaging. See [PDF/A Export](PDF_A_EXPORT.md) for scope and [Build And Verification](BUILD_AND_VERIFICATION.md) for checks run.

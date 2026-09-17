@@ -7,7 +7,7 @@ tags:
   - documents
   - capability-matrix
 resource: "docs/DOCUMENT_CONVERSION.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 source_sync: "manual"
 ---
 
@@ -43,6 +43,10 @@ A renamed file is therefore handled by what it is, not what it is called.
 | MD | built-in (Typst) | Office | built-in | built-in | copy |
 | TXT | built-in (Typst) | Office | copy | built-in | copy |
 | HTML | Office | Office | Office | copy | built-in |
+
+PDF/A-1b, PDF/A-2b, PDF/A-3b, PDF/A-4, PDF/A-4f and PDF/UA-1 are additional targets for DOCX, ODT, PPTX, XLSX and
+HTML only, requiring a detected LibreOffice version of 25.8 or later. Both
+use Office without a built-in fallback; see [PDF/A Export](PDF_A_EXPORT.md).
 
 Without LibreOffice, every `Office` cell becomes unavailable with the reason `LibreOffice was not found…`, except HTML to PDF and HTML to TXT, which fall back to the built-in path (HTML to Markdown, then Typst or plain text). The reasons behind each *no*:
 
@@ -104,3 +108,7 @@ The switch in the settings column asks for a new password (12 characters or more
 - Spreadsheet options such as sheet selection, print areas and scaling.
 - Passing several files to one LibreOffice process; each Office item starts its own.
 - Font substitution warnings when a DOCX uses fonts LibreOffice does not have.
+
+## Archival PDF export
+
+PDF/A-1b, PDF/A-2b, PDF/A-3b, PDF/A-4, PDF/A-4f and PDF/UA-1 are additional Convert targets for DOCX, ODT, PPTX, XLSX and HTML with detected LibreOffice 25.8+. See [PDF/A Export](PDF_A_EXPORT.md) for eligibility, preview behavior, merge/password restrictions and validation limits.

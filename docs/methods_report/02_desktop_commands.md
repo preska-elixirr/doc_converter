@@ -1,13 +1,13 @@
 ---
 title: "Desktop Commands"
-description: "API catalog for the Tauri shell: application state, asset and request shapes, the eight invoke commands, and the two events."
+description: "API catalog for the Tauri shell: application state, asset and request shapes, the invoke commands, and the two events."
 type: "catalog"
 tags:
   - methods-report
   - tauri
   - commands
 resource: "docs/methods_report/02_desktop_commands.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 doc_version: "2.0.0"
 source_sync: "manual"
 ---
@@ -33,16 +33,21 @@ struct AppState {
 #[derive(Serialize)]
 struct Asset { id: String, name: String, bytes: u64, kind: InputKind, label: String,
                outputs: Vec<Availability>, pdf: Option<PdfInfo>, image: Option<ImageInfo> }
-#[derive(Serialize)] struct EngineStatus { ready: bool, office: Option<OfficeEngine> }
+#[derive(Serialize)] struct EngineStatus { ready: bool, office: Option<OfficeEngine>, validator: bool }
 #[derive(Serialize)] struct AssetOutputs { id: String, outputs: Vec<Availability> }
 #[derive(Deserialize)] struct RequestItem { id: String, format: Option<String>, page_breaks: Vec<usize> }
 #[derive(Deserialize)]
 struct BatchRequest { mode: String, items: Vec<RequestItem>, merge: bool, merge_name: String, layout: Layout,
-                      password: String, protect: bool, encryption: String, image: ImageSettings }
+                      password: String, protect: bool, encryption: String, image: ImageSettings, attachments: Vec<AttachmentRequest> }
 #[derive(Serialize)] struct BatchOutcome { result: String, reports: Vec<ItemReport> }  // "saved" | "cancelled" | "nothing"
 ```
 
 All request fields except `mode` and `items` have serde defaults.
+
+`mode: "clean"` maps to `Action::Clean` for DOCX, PDF and supported image kinds.
+Other kinds are rejected in `build_tasks`; the cleaner re-inspects bytes and
+rejects encrypted PDFs. Cleaning needs no password and ignores conversion,
+merge, layout, protection and image quality options. Photo outputs are PNG.
 
 ### Commands
 
@@ -114,3 +119,25 @@ bundle:      active false
 ```
 
 `capabilities/default.json`: window `main`, permissions `["core:default", "core:webview:allow-set-webview-zoom"]`.
+
+### PDF standards and attachments
+
+`parse_format` accepts `pdfa1b`, `pdfa2b`, `pdfa3b`, `pdfa4`, `pdfa4f` and
+`pdfua1`. `build_tasks` refuses merge/protection combinations before merge
+normalization, attachments with unsupported targets, and PDF/A-4f without files.
+`BatchRequest.attachments` defaults to an empty array and contains `{ id,
+relationship, description }` entries. `resolve_attachments` resolves existing
+backend file IDs; the webview cannot supply arbitrary attachment paths. The core
+rechecks all processing constraints. `engine_status.validator` reports local
+veraPDF/Java detection; standards exports require it before the save dialog.
+
+```rust
+#[tauri::command]
+async fn validate_pdf(app: AppHandle, state: State<'_, AppState>, id: String, format: String)
+    -> Result<ValidationReport, String>;
+```
+
+Validates one registered existing PDF against the explicit requested standard,
+without rewriting it. Shares busy/cancel state and the preview gate with batches.
+Returns structured machine results and human-review status; no source path is
+accepted from IPC. UI issues and rule descriptions are rendered as text.

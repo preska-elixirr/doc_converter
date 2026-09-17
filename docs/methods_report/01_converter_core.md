@@ -7,7 +7,7 @@ tags:
   - rust
   - core
 resource: "docs/methods_report/01_converter_core.md"
-last_updated: "2026-09-16"
+last_updated: "2026-09-17"
 doc_version: "2.0.0"
 source_sync: "manual"
 ---
@@ -60,8 +60,8 @@ pub fn inspect(path: &Path) -> InputKind;
 
 ```rust
 #[serde(rename_all = "lowercase")]
-pub enum OutputFormat { Pdf, Docx, Txt, Html, Md }
-impl OutputFormat { pub const ALL: [OutputFormat; 5]; pub fn ext(self) -> &'static str; pub fn label(self) -> &'static str; }
+pub enum OutputFormat { Pdf, Pdfa1b, Pdfa2b, Pdfa3b, Pdfa4, Pdfa4f, Pdfua1, Docx, Txt, Html, Md }
+impl OutputFormat { pub const ALL: [OutputFormat; 11]; pub fn ext(self) -> &'static str; pub fn label(self) -> &'static str; pub fn is_archival(self) -> bool; pub fn is_standard_pdf(self) -> bool; pub fn supports_attachments(self) -> bool; pub fn validation_flavour(self) -> Option<&'static str>; }
 
 #[derive(Default)] pub struct Engines { pub office: Option<OfficeEngine> }
 
@@ -122,9 +122,10 @@ pub fn image_pdf(images: &[DynamicImage], quality: u8) -> Result<Vec<u8>>;
 
 ```rust
 #[derive(Serialize)] pub struct OfficeEngine { pub path: PathBuf, pub version: String, pub markdown: bool, #[serde(skip)] pub profile: PathBuf }
-pub struct Target { pub ext: &'static str, pub convert_to: &'static str }
-impl Target { pub const PDF; pub const DOCX; pub const TXT; pub const HTML /* Writer, EmbedImages */; pub const HTML_CALC; pub const MD; }
+pub struct Target { pub ext: &'static str, pub convert_to: Cow<'static, str> }
+impl Target { pub fn standard(kind: InputKind, format: OutputFormat) -> Target; pub fn archival(kind: InputKind, pdfa4: bool) -> Target; pub const PDF; pub const DOCX; pub const TXT; pub const HTML /* Writer, EmbedImages */; pub const HTML_CALC; pub const MD; }
 impl OfficeEngine {
+    pub fn supports_pdfa(&self) -> bool; // known version >= 25.8
     pub fn candidates() -> Vec<PathBuf>;                       // env var, exe-relative engines/ and .tools/, Program Files, PATH
     pub fn detect(profile: &Path) -> Option<OfficeEngine>;     // first existing candidate; version from bootstrap.ini; no process started
     pub fn warm_up(&self) -> Result<()>;                       // prepares the profile, runs --version (180 s limit)
@@ -176,22 +177,36 @@ pub fn rewrite(source: &Path, destination: &Path, layout: &Layout, cancel: &Atom
 // sets default spacing in styles.xml (self-closing defaults handled). Never overwrites; cancel checked per entry.
 ```
 
+### `clean.rs`
+
+```rust
+pub fn supported(kind: InputKind) -> bool; // DOCX, PDF and supported image kinds
+pub fn extension(kind: InputKind) -> &'static str; // docx, pdf, otherwise png (use supported first)
+pub fn clean(source: &Path, destination: &Path, cancel: &AtomicBool) -> Result<()>;
+// Re-inspects content, strips supported metadata/review/hidden content, saves a new copy.
+// Refuses encrypted PDFs, unsupported Word structural revisions, malformed/oversized DOCX,
+// animated images and multipage TIFF. Photo output is always lossless PNG, EXIF orientation applied.
+// Sources remain unchanged; no overwrite or partial commit. No Office dependency.
+```
+
+Implementation details and privacy scope: [`../CLEAN_BEFORE_SHARING.md`](../CLEAN_BEFORE_SHARING.md).
+
 ### `job.rs`
 
 ```rust
 #[serde(tag = "op", rename_all = "lowercase")]
-pub enum Action { Convert { format: OutputFormat }, Image { format: String }, Protect, Unlock, Encrypt, Decrypt }
+pub enum Action { Convert { format: OutputFormat }, Image { format: String }, Protect, Unlock, Encrypt, Decrypt, Clean }
 pub struct Task { pub source: PathBuf, pub name: String, pub kind: InputKind, pub action: Action, pub page_breaks: Vec<usize> }
 impl Task { pub fn layout(&self, batch: &Batch) -> Layout; }   // batch layout with this task's breaks
 #[serde(default)] pub struct ImageSettings { pub max_edge: u32, pub quality: u8 }
-pub struct Batch { pub tasks: Vec<Task>, pub merge: bool, pub layout: Layout, pub password: Option<SecretString>, pub protect: bool, pub image: ImageSettings }
+pub struct Batch { pub tasks: Vec<Task>, pub merge: bool, pub layout: Layout, pub password: Option<SecretString>, pub protect: bool, pub image: ImageSettings, pub attachments: Vec<Attachment> }
 pub enum Destination { Folder(PathBuf), File(PathBuf) }
 #[serde(rename_all = "lowercase")] pub enum Status { Queued, Working, Done, Failed, Cancelled }
-pub struct ItemReport { pub index: usize, pub status: Status, pub detail: String, pub output: Option<String> }
+pub struct ItemReport { pub index: usize, pub status: Status, pub detail: String, pub output: Option<String>, pub validation: Option<ValidationReport> }
 
 pub fn output_name(task: &Task, batch: &Batch) -> String;
 // Convert "{stem}.{ext}", Image "{stem}.{format}", Protect "{stem}-protected.pdf", Unlock "{stem}-unlocked.pdf",
-// Encrypt "{name}.age", Decrypt "restored-{name minus .age}".
+// Encrypt "{name}.age", Decrypt "restored-{name minus .age}", Clean "{stem}-clean.{docx|pdf|png}".
 pub fn convert_document(source: &Path, kind: InputKind, format: OutputFormat, layout: &Layout, engines: &Engines, work: &Path, tag: &str, cancel: &AtomicBool) -> Result<PathBuf>;
 // Runs the route into work/{tag}.{ext} (or LibreOffice's own name) and returns it.
 pub fn preview_pdf(source: &Path, kind: InputKind, target: OutputFormat, layout: &Layout, engines: &Engines, cancel: &AtomicBool) -> Result<Vec<u8>>;
@@ -223,4 +238,39 @@ pub fn run(batch: &Batch, destination: &Destination, engines: &Engines, cancel: 
 
 ### Tests
 
-Sixteen; listed in [`../BUILD_AND_VERIFICATION.md`](../BUILD_AND_VERIFICATION.md).
+Listed in [`../BUILD_AND_VERIFICATION.md`](../BUILD_AND_VERIFICATION.md).
+
+PDF/A formats use Route::Office only for DOCX/ODT/PPTX/XLSX/HTML with LibreOffice 25.8+. The crate-private `office::check_standard_output(path, format)` checks pages, encryption and XMP declaration before commit. `run` rejects standards export combined with merging or protection, invalid attachment combinations, and PDF/A-4f without attachments. Final outputs require passing local veraPDF validation. See [PDF/A Export](../PDF_A_EXPORT.md).
+
+### `pdf_standards.rs`
+
+```rust
+pub const MAX_ATTACHMENTS: usize = 20;
+pub const MAX_ATTACHMENT_BYTES: u64 = 32 * 1024 * 1024;
+pub const MAX_TOTAL_BYTES: usize = 128 * 1024 * 1024;
+pub enum Relationship { Source, Data, Supplement, Alternative, Unspecified }
+pub struct Attachment { pub source: PathBuf, pub relationship: Relationship, pub description: String }
+pub fn embed(source: &Path, output: &Path, format: OutputFormat, attachments: &[Attachment], cancel: &AtomicBool) -> Result<()>;
+```
+
+Copies the exported PDF into a fresh work file with catalog AF and EmbeddedFiles
+entries; preserves attachment bytes, declares PDF/A-4f after embedding, and refuses
+existing embedded files, duplicate names, excessive sizes and unsupported profiles.
+Does not independently validate: the job must validate before final commit.
+
+### `validation.rs`
+
+```rust
+pub struct Validator { pub home: PathBuf, pub java: PathBuf }
+pub struct ValidationReport { pub profile: String, pub passed: bool, pub human_review_required: bool, pub issues: Vec<String> }
+impl Validator {
+    pub fn detect() -> Option<Self>;
+    pub fn validate(&self, pdf: &Path, format: OutputFormat, cancel: &AtomicBool) -> Result<ValidationReport>;
+}
+```
+
+Runs local Java/veraPDF with an explicit profile, heap/time/report bounds and
+cancellation. Parses exactly one matching validation report and a successful
+batch summary. Non-compliant results are returned with issues; operational failures
+are errors. `Error::Validation(ValidationReport)` carries a failed export's report
+into `ItemReport.validation`. PDF/UA-1 always requires human review after machine checks.
