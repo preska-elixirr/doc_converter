@@ -55,19 +55,19 @@ UI scale uses the webview zoom (`getCurrentWebview().setZoom`), which scales the
 | Convert | `convert` | Document conversion, merge, PDF protection, page layout |
 | Images | `images` | Image conversion |
 | Clean before sharing | `clean` | Metadata removal into new DOCX, PDF or PNG copies |
-| Encrypt | `encrypt` | Protected PDF or `.age` file |
-| Decrypt | `decrypt` | Unlock PDF or restore `.age` |
+| Encrypt | `encrypt` | Protected PDF, `.age` file with a password, or `.age` file for a recipient's public key |
+| Decrypt | `decrypt` | Unlock PDF or restore `.age` with the password or a secret key |
 | License | `license` | Placeholder card; no controls |
 
-Switching a tab clears both password fields, the error, the result bar, and finished row statuses. Rows and their selection are kept. Tabs are disabled during a job.
+Switching a tab clears the password, confirmation and secret key fields, the error, the result bar, and finished row statuses. Rows and their selection are kept. Tabs are disabled during a job.
 
 ## Settings column per mode
 
 - **Convert**: batch format select; *Password-protect PDFs* switch; *Combine into one document* switch with the output filename; page orientation (As is, Portrait, Landscape). See [`DOCUMENT_CONVERSION.md`](DOCUMENT_CONVERSION.md).
 - **Images**: format select, quality slider, resize select, transparency note. See [`IMAGE_CONVERSION.md`](IMAGE_CONVERSION.md).
 - **Clean before sharing**: plain-language metadata explanation, per-format removal details, revision acceptance and output limitations. Action: **Save cleaned copies**. See [`CLEAN_BEFORE_SHARING.md`](CLEAN_BEFORE_SHARING.md).
-- **Encrypt**: protection type radio cards. **Decrypt**: info card. See [`ENCRYPTION.md`](ENCRYPTION.md).
-- **Password block** (Encrypt, Decrypt, or Convert with protection on and a PDF output among the selected rows or a merge): password with Show/Hide; confirm field, mismatch error and warning except in Decrypt.
+- **Encrypt**: three protection type radio cards; recipient mode shows the *Recipient public keys* box and the key pair card instead of the password block. **Decrypt**: info card, then the password block, the *Secret key* field and the key pair card. The key pair card has *Create a key pair* (native save dialog), the public key with *Copy*, the saved path and a warning; in recipient mode also *Add my public key*. See [`ENCRYPTION.md`](ENCRYPTION.md).
+- **Password block** (Encrypt in its password modes, Decrypt, or Convert with protection on and a PDF output among the selected rows or a merge): password with Show/Hide; confirm field, mismatch error and warning except in Decrypt.
 - **Destination card**: `Choose a location when saving.`, or the folder wording when several files are selected.
 - **Action area**: summary `N documents ready` and the output type (`PDF`, `Mixed formats`, `1 combined PDF`, `Protected PDF`, `Encrypted copy`, `Restored copy`); the primary button; Cancel while busy; a note counting skipped files and unreachable formats.
 
@@ -76,9 +76,9 @@ Switching a tab clears both password fields, the error, the result bar, and fini
 The label is `Convert N files`, `Combine into one PDF`, `Convert images`, `Protect PDFs`, `Encrypt files` or `Decrypt files`, and `Working…` while busy. It is enabled only when all of these hold:
 
 - running inside the desktop app
-- no job is running
+- no job is running and no key pair is being created
 - at least one selected row is eligible for the mode
-- the password rule holds when a password is needed
+- the password rule holds when a password is needed; in recipient mode the key box has at least one line; in Decrypt a password or a secret key is entered
 - in Convert, every selected row targets a format it can reach, and a merge has a name
 
 ## Page layout panel
@@ -132,3 +132,12 @@ attachment list, relationships/descriptions and validation of one existing selec
 PDF. Per-row validation details show failed rules or pass status; PDF/UA success
 still includes human-review guidance. Attachment and validator requirements block
 invalid submissions, while Rust independently enforces them. See [PDF Standards](PDF_A_EXPORT.md).
+
+## Watermark controls
+
+Convert includes a **Watermark every page** switch, initially off, and a text
+field initially containing “Confidential”. English and Croatian help explains
+that the label applies to every page of all selected ordinary PDF outputs.
+Invalid text or incompatible targets disable the primary action and show an
+inline error. Controls are disabled during processing; recipient names stay in
+React state rather than persistent preferences. See [PDF Tools](PDF_TOOLS.md#watermarks).

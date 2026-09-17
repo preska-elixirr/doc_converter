@@ -112,3 +112,7 @@ The switch in the settings column asks for a new password (12 characters or more
 ## Archival PDF export
 
 PDF/A-1b, PDF/A-2b, PDF/A-3b, PDF/A-4, PDF/A-4f and PDF/UA-1 are additional Convert targets for DOCX, ODT, PPTX, XLSX and HTML with detected LibreOffice 25.8+. See [PDF/A Export](PDF_A_EXPORT.md) for eligibility, preview behavior, merge/password restrictions and validation limits.
+
+## Watermark every page
+
+Convert can add “Confidential” or a recipient name to every page of ordinary PDF outputs, including existing PDFs and combined documents. All selected outputs must be ordinary PDF; Rust rejects incompatible actions and formats. Marking happens before password protection. See [PDF Tools](PDF_TOOLS.md#watermarks) for behavior and limitations.

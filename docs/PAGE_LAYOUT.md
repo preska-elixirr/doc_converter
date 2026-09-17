@@ -91,3 +91,7 @@ Previews run one at a time behind a gate in the backend. A newer preview request
 - Keep-with-next, spacing before, or per-paragraph overrides.
 - ODT rewrites (the same edits on `styles.xml` and `content.xml` are feasible).
 - Undo history beyond unticking a break or *Reset page breaks*.
+
+## Watermark preview
+
+The desktop `preview` command accepts optional `watermark` text. For ordinary PDF targets it applies the same overlay as the batch after rendering. Changing the label refreshes the preview; invalid text or unsupported targets return an error rather than an unmarked preview. Existing PDFs remain subject to the security-inspection preview restriction. The core `job::preview_pdf` signature is unchanged; the command applies the overlay to its returned bytes.

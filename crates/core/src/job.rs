@@ -4,7 +4,9 @@
 
 use crate::{
     capability::{route, Engines, OutputFormat, Route},
-    check_cancel, copy_file, docx, images, layout, message,
+    check_cancel, copy_file,
+    crypto::{Identity, Recipient},
+    docx, images, layout, message,
     office::Target,
     pdf, stem, text, unique_path, InputKind, Layout, Result, SecretString,
 };
@@ -18,11 +20,17 @@ use tempfile::TempDir;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
 pub enum Action {
-    Convert { format: OutputFormat },
-    Image { format: String },
+    Convert {
+        format: OutputFormat,
+    },
+    Image {
+        format: String,
+    },
     Protect,
     Unlock,
     Encrypt,
+    /// `.age` output for the batch's public keys; no password involved.
+    EncryptFor,
     Decrypt,
     Clean,
 }
@@ -63,8 +71,14 @@ pub struct Batch {
     pub password: Option<SecretString>,
     /// Convert mode: add `password` to every PDF output.
     pub protect: bool,
+    /// Optional text overlay on every page of ordinary PDF conversion outputs.
+    pub watermark: Option<String>,
     pub image: ImageSettings,
     pub attachments: Vec<crate::pdf_standards::Attachment>,
+    /// Encrypt for recipients: the public keys that can open the `.age` outputs.
+    pub recipients: Vec<Recipient>,
+    /// Decrypt: the secret key for `.age` files encrypted to a public key.
+    pub identity: Option<Identity>,
 }
 
 #[derive(Clone, Debug)]
@@ -101,7 +115,7 @@ pub fn output_name(task: &Task, batch: &Batch) -> String {
         Action::Clean => format!("{stem}-clean.{}", crate::clean::extension(task.kind)),
         Action::Protect => format!("{stem}-protected.pdf"),
         Action::Unlock => format!("{stem}-unlocked.pdf"),
-        Action::Encrypt => format!("{}.age", task.name),
+        Action::Encrypt | Action::EncryptFor => format!("{}.age", task.name),
         Action::Decrypt => {
             let name = task.name.strip_suffix(".age").unwrap_or(&task.name);
             let _ = batch;
@@ -525,6 +539,12 @@ fn run_item(
                 }
                 validation = Some(report);
             }
+            if let Some(text) = &batch.watermark {
+                let marked = work.join(format!("{tag}-watermarked.pdf"));
+                let bytes = crate::watermark::apply(&std::fs::read(&produced)?, text, cancel)?;
+                crate::write_bytes(&marked, &bytes, cancel)?;
+                produced = marked;
+            }
             match (&batch.password, *format) {
                 (Some(password), OutputFormat::Pdf) if batch.protect => {
                     pdf::protect(&produced, &target, password, cancel)?
@@ -561,13 +581,16 @@ fn run_item(
                 .ok_or_else(|| message("Enter a password."))?;
             crate::encrypt(&task.source, &target, password, cancel)?
         }
-        Action::Decrypt => {
-            let password = batch
-                .password
-                .clone()
-                .ok_or_else(|| message("Enter the password."))?;
-            crate::decrypt(&task.source, &target, password, cancel)?
+        Action::EncryptFor => {
+            crate::crypto::encrypt_for(&task.source, &target, &batch.recipients, cancel)?
         }
+        Action::Decrypt => crate::decrypt(
+            &task.source,
+            &target,
+            batch.password.as_ref(),
+            batch.identity.as_ref(),
+            cancel,
+        )?,
     }
     Ok((target, validation))
 }
@@ -614,6 +637,9 @@ fn run_merge(
     }
     check_cancel(cancel)?;
     let mut bytes = pdf::merge_to_bytes(&parts, cancel)?;
+    if let Some(text) = &batch.watermark {
+        bytes = crate::watermark::apply(&bytes, text, cancel)?;
+    }
     if batch.protect {
         if let Some(password) = &batch.password {
             bytes = pdf::protect_bytes(&bytes, password)?;
@@ -621,6 +647,26 @@ fn run_merge(
     }
     crate::write_bytes(target, &bytes, cancel)?;
     Ok(target.clone())
+}
+
+/// Validate watermark text and eligibility before opening a destination dialog.
+pub fn validate_watermark(batch: &Batch) -> Result<()> {
+    if let Some(text) = &batch.watermark {
+        crate::watermark::validate(text)?;
+        if batch.tasks.iter().any(|task| {
+            !matches!(
+                task.action,
+                Action::Convert {
+                    format: OutputFormat::Pdf
+                }
+            )
+        }) {
+            return Err(message(
+                "Watermarks require ordinary PDF output in Convert mode.",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Runs the whole batch. Each report is sent through `progress` as it happens
@@ -632,6 +678,24 @@ pub fn run(
     cancel: &AtomicBool,
     mut progress: impl FnMut(ItemReport),
 ) -> Vec<ItemReport> {
+    if let Err(error) = validate_watermark(batch) {
+        return batch
+            .tasks
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let report = ItemReport {
+                    index,
+                    status: Status::Failed,
+                    detail: error.to_string(),
+                    output: None,
+                    validation: None,
+                };
+                progress(report.clone());
+                report
+            })
+            .collect();
+    }
     let attachment_error = if batch.attachments.len() > crate::pdf_standards::MAX_ATTACHMENTS {
         Some("At most 20 attachments are allowed.")
     } else if !batch.attachments.is_empty()
@@ -844,11 +908,154 @@ mod tests {
             layout: Layout::default(),
             password: None,
             protect: false,
+            watermark: None,
             attachments: Vec::new(),
+            recipients: Vec::new(),
+            identity: None,
             image: ImageSettings {
                 max_edge: 0,
                 quality: 85,
             },
+        }
+    }
+
+    #[test]
+    fn watermark_batches_preserve_sources_protect_merge_and_never_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        std::fs::write(&source, "Original document\n\nSecond page").unwrap();
+        let original = std::fs::read(&source).unwrap();
+        let mut t = task(
+            source.clone(),
+            Action::Convert {
+                format: OutputFormat::Pdf,
+            },
+        );
+        t.page_breaks = vec![1];
+        let mut b = batch(vec![t.clone()]);
+        b.watermark = Some("Confidential".into());
+        let out = dir.path().join("out.pdf");
+        let engines = Engines::default();
+        let cancel = AtomicBool::new(false);
+        let reports = run(
+            &b,
+            &Destination::File(out.clone()),
+            &engines,
+            &cancel,
+            |_| {},
+        );
+        assert_eq!(reports[0].status, Status::Done, "{reports:?}");
+        let bytes = std::fs::read(&out).unwrap();
+        let check = |doc: &lopdf::Document, count| {
+            assert_eq!(doc.get_pages().len(), count);
+            for page in doc.get_pages().into_values() {
+                assert!(String::from_utf8_lossy(&doc.get_page_content(page))
+                    .contains("/DocConverterWatermark Do"));
+            }
+        };
+        check(&lopdf::Document::load_mem(&bytes).unwrap(), 2);
+        // Existing PDFs take the same copy route and retain the original bytes.
+        let mut existing = batch(vec![task(
+            out.clone(),
+            Action::Convert {
+                format: OutputFormat::Pdf,
+            },
+        )]);
+        existing.watermark = Some("Željko Čović".into());
+        let copy = dir.path().join("recipient.pdf");
+        assert_eq!(
+            run(
+                &existing,
+                &Destination::File(copy.clone()),
+                &engines,
+                &cancel,
+                |_| {}
+            )[0]
+            .status,
+            Status::Done
+        );
+        check(&lopdf::Document::load(&copy).unwrap(), 2);
+        assert_eq!(std::fs::read(&out).unwrap(), bytes);
+        assert_eq!(
+            run(
+                &b,
+                &Destination::File(out.clone()),
+                &engines,
+                &cancel,
+                |_| {}
+            )[0]
+            .status,
+            Status::Failed
+        );
+        assert_eq!(std::fs::read(&out).unwrap(), bytes);
+        b.protect = true;
+        b.password = Some(secret("watermark password".into()));
+        for merge in [false, true] {
+            b.merge = merge;
+            if merge {
+                b.tasks.push(t.clone());
+            }
+            let target = dir.path().join(format!("protected-{merge}.pdf"));
+            let reports = run(
+                &b,
+                &Destination::File(target.clone()),
+                &engines,
+                &cancel,
+                |_| {},
+            );
+            assert!(
+                reports.iter().all(|r| r.status == Status::Done),
+                "{reports:?}"
+            );
+            let doc = lopdf::Document::load_with_password(&target, "watermark password").unwrap();
+            check(&doc, if merge { 4 } else { 2 });
+        }
+        let cancelled = dir.path().join("cancelled.pdf");
+        run(
+            &b,
+            &Destination::File(cancelled.clone()),
+            &engines,
+            &AtomicBool::new(true),
+            |_| {},
+        );
+        assert!(!cancelled.exists());
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+    }
+
+    #[test]
+    fn watermark_rejects_ineligible_batches_before_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        std::fs::write(&source, "source").unwrap();
+        for action in [
+            Action::Convert {
+                format: OutputFormat::Docx,
+            },
+            Action::Convert {
+                format: OutputFormat::Pdfa2b,
+            },
+            Action::Clean,
+            Action::Image {
+                format: "pdf".into(),
+            },
+            Action::Encrypt,
+        ] {
+            let mut b = batch(vec![task(source.clone(), action)]);
+            b.watermark = Some("Confidential".into());
+            for merge in [false, true] {
+                b.merge = merge;
+                let out = dir.path().join("out.pdf");
+                let reports = run(
+                    &b,
+                    &Destination::File(out.clone()),
+                    &Engines::default(),
+                    &AtomicBool::new(false),
+                    |_| {},
+                );
+                assert_eq!(reports[0].status, Status::Failed);
+                assert!(reports[0].detail.contains("ordinary PDF"));
+                assert!(!out.exists());
+            }
         }
     }
 
@@ -1423,6 +1630,48 @@ mod tests {
     }
 
     #[test]
+    fn public_key_encryption_runs_through_the_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        let source = dir.path().join("notes.md");
+        std::fs::write(&source, "# Private notes\n").unwrap();
+        let engines = Engines::default();
+        let cancel = AtomicBool::new(false);
+        let recipient = crate::crypto::Identity::generate();
+
+        // Without keys the item fails; a password never stands in for them.
+        let mut b = batch(vec![task(source.clone(), Action::EncryptFor)]);
+        b.password = Some(secret("a long enough passphrase".into()));
+        let folder = Destination::Folder(out.clone());
+        let reports = run(&b, &folder, &engines, &cancel, |_| {});
+        assert_eq!(reports[0].status, Status::Failed, "{reports:?}");
+        assert!(reports[0].detail.contains("public key"), "{reports:?}");
+        assert!(!out.join("notes.md.age").exists());
+
+        b.recipients = vec![recipient.to_public()];
+        let reports = run(&b, &folder, &engines, &cancel, |_| {});
+        assert_eq!(reports[0].status, Status::Done, "{reports:?}");
+        let sealed = out.join("notes.md.age");
+        assert!(sealed.exists());
+
+        // The password alone does not open it; the secret key does.
+        let mut d = batch(vec![task(sealed, Action::Decrypt)]);
+        d.password = Some(secret("a long enough passphrase".into()));
+        let reports = run(&d, &folder, &engines, &cancel, |_| {});
+        assert_eq!(reports[0].status, Status::Failed, "{reports:?}");
+        assert!(reports[0].detail.contains("secret key"), "{reports:?}");
+        d.password = None;
+        d.identity = Some(recipient);
+        let reports = run(&d, &folder, &engines, &cancel, |_| {});
+        assert_eq!(reports[0].status, Status::Done, "{reports:?}");
+        assert_eq!(
+            std::fs::read_to_string(out.join("restored-notes.md")).unwrap(),
+            "# Private notes\n"
+        );
+    }
+
+    #[test]
     fn output_names_follow_the_action() {
         let b = batch(vec![]);
         let t = |name: &str, action: Action| Task {
@@ -1445,6 +1694,10 @@ mod tests {
             "a.b.pdf"
         );
         assert_eq!(output_name(&t("a.docx", Action::Encrypt), &b), "a.docx.age");
+        assert_eq!(
+            output_name(&t("a.docx", Action::EncryptFor), &b),
+            "a.docx.age"
+        );
         assert_eq!(
             output_name(&t("a.docx.age", Action::Decrypt), &b),
             "restored-a.docx"

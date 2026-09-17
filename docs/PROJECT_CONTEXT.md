@@ -32,9 +32,10 @@ Doc Converter is a Windows-first Tauri 2 desktop app. It processes local files i
 - documents to PDF, DOCX, TXT, HTML or Markdown, with a backend-computed capability matrix
 - combining documents into one PDF, in a chosen order
 - page orientation, margins, paragraph spacing and real page breaks for Word, Markdown and text sources, with a live preview of the real output
+- text watermarks on every page of ordinary PDF conversions and merges
 - PDF open passwords (AES-256) on conversion, on existing PDFs, and their removal
 - images (PNG, JPEG, BMP, WebP, TIFF) to PNG, JPG, WebP or a PDF page, with resize and quality
-- password-based `.age` encryption of any file and authenticated restore
+- `.age` encryption of any file with a password or for a recipient's public key, key pair creation, and authenticated restore with the password or the secret key
 - **Clean before sharing**: DOCX review/hidden-content removal, PDF metadata removal, photo metadata removal into PNG copies
 - a multi-select queue with drag and drop, per-row formats, per-row statuses and progress
 
@@ -49,6 +50,7 @@ Highest-signal files:
 - `crates/core/src/job.rs` - batch execution, routes to engines, previews, output naming
 - `crates/core/src/capability.rs` - which input becomes which output with which engine
 - `crates/core/src/office.rs` - LibreOffice detection and isolated execution
+- `crates/core/src/watermark.rs` - local text overlays for ordinary PDF outputs
 - `crates/core/src/pdf.rs` - passwords, unlock, merge, text, image pages
 - `crates/core/src/layout.rs`, `docx.rs`, `text.rs` - page layout for text and Word sources
 - `crates/core/src/images.rs`, `crypto.rs`, `inspect.rs` - images, age, input detection
@@ -80,7 +82,7 @@ Highest-signal files:
 - **Sources are never modified.** Every edit happens on a copy in the batch work folder; every output is a new file, committed with `persist_noclobber`. Folder outputs get numbered names.
 - **The backend decides.** Input kinds come from content sniffing; the capability matrix, password rules and eligibility are enforced in Rust even though the UI mirrors them.
 - **No paths in the page.** The page holds opaque IDs; the only paths it sends are the ones the native drop event gave it, and the backend re-validates them.
-- **Secrets stay in process.** Passwords are `SecretString`; PDF passwords go to lopdf in memory; LibreOffice never sees a secret or a command-line password.
+- **Secrets stay in process.** Passwords are `SecretString`; PDF passwords go to lopdf in memory; LibreOffice never sees a secret or a command-line password. age secret keys are parsed into `x25519::Identity` in the command layer; a generated secret key goes straight to the user's file and only the public key returns to the page.
 - **LibreOffice is isolated.** Private profile, macro security very high, update check off, job object with kill-on-close, timeouts. The user's own LibreOffice is untouched.
 - **User text is data.** The Typst template receives blocks as JSON and never evaluates document text as markup.
 - **One job at a time.** `busy` covers batches and dialogs; previews run one at a time behind their own gate and are cancelled by a newer preview or a batch. Cancel flags are checked at every stage boundary.

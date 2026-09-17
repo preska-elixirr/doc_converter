@@ -54,7 +54,9 @@ This is process separation, not a sandbox. A malicious document can still exploi
 
 - Passwords go from the input field, through `invoke`, into `SecretString` in Rust. The core never logs them.
 - PDF passwords are handed to lopdf in memory through `expose_secret`; they never appear on a command line, in a process list, or in a temporary file.
-- The UI clears both password fields after every job and on every tab change.
+- age secret keys are pasted like a password, parsed into `age::x25519::Identity` in the command layer before any dialog opens, and dropped with the batch. Public keys are not secret; the recipient list stays in the page.
+- A generated key pair goes straight from the core into the file the user chose in the save dialog; the page receives only the public key and the file's path.
+- The UI clears the password, confirmation and secret key fields after every job and on every tab change.
 - The only persisted data is the UI language and UI scale, in the webview's `localStorage`. There is no settings file and no history; no path, name, or password is ever stored.
 - JavaScript strings and the IPC JSON copy cannot be zeroed. Treat that as a known limit.
 
@@ -92,7 +94,7 @@ Formats are sniffed from content. Image decoding, PDF parsing, Typst compilation
 
 ## Encryption formats
 
-- Files: `.age` with the passphrase (scrypt) recipient, standard and interoperable. Decryption authenticates the whole stream before commit.
+- Files: `.age` with the passphrase (scrypt) recipient or with X25519 recipients (`age1…` public keys), standard and interoperable. The header decides which secret opens a file. Decryption authenticates the whole stream before commit.
 - PDFs: AES-256, PDF 2.0 standard security handler, random owner password, all permissions granted. See [`PDF_TOOLS.md`](PDF_TOOLS.md).
 
 Do not reintroduce a custom container; the mockup's `.dcenc` was replaced on purpose.
@@ -102,6 +104,7 @@ Do not reintroduce a custom container; the mockup's `.dcenc` was replaced on pur
 - No worker process isolation for lopdf, image, Typst or age; only LibreOffice is out of process.
 - LibreOffice has no memory limit and no network block beyond the disabled update check.
 - Suggested output names reveal the original name, for example `report.docx.age`.
+- The secret key file written by *Create a key pair* inherits its folder's permissions; nothing restricts it to the current user.
 - No colour-profile handling; CMYK JPEG and ICC profiles are untested.
 - No code signing, installer, or WebView2 provisioning.
 - Licensing is not wired, so paid-feature gating does not exist.

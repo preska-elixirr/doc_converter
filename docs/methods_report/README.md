@@ -21,7 +21,7 @@ This catalog tracks every public Rust item in `crates/core`, every Tauri command
 ## Sections
 
 - [01 Converter Core](01_converter_core.md) - `converter-core` crate: `lib`, `inspect`, `capability`, `crypto`, `images`, `pdf`, `office`, `text`, `layout`, `docx`, `clean`, `job`
-- [02 Desktop Commands](02_desktop_commands.md) - `AppState`, request and asset shapes, the seven commands, two events, startup
+- [02 Desktop Commands](02_desktop_commands.md) - `AppState`, request and asset shapes, the commands, two events, startup
 - [03 Frontend](03_frontend.md) - TypeScript types, invoke wrappers, `App` state and derived flags, `PdfPreview`
 
 ## Coverage Policy

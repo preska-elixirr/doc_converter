@@ -38,7 +38,7 @@ struct Asset { id: String, name: String, bytes: u64, kind: InputKind, label: Str
 #[derive(Deserialize)] struct RequestItem { id: String, format: Option<String>, page_breaks: Vec<usize> }
 #[derive(Deserialize)]
 struct BatchRequest { mode: String, items: Vec<RequestItem>, merge: bool, merge_name: String, layout: Layout,
-                      password: String, protect: bool, encryption: String, image: ImageSettings, attachments: Vec<AttachmentRequest> }
+                      password: String, protect: bool, watermark: Option<String>, encryption: String, recipients: String, identity: String, image: ImageSettings, attachments: Vec<AttachmentRequest> }
 #[derive(Serialize)] struct BatchOutcome { result: String, reports: Vec<ItemReport> }  // "saved" | "cancelled" | "nothing"
 ```
 
@@ -61,7 +61,7 @@ merge, layout, protection and image quality options. Photo outputs are PNG.
 #[tauri::command] fn engine_status(state) -> EngineStatus;
 
 #[tauri::command] async fn run_batch(app, state, request: BatchRequest) -> Result<BatchOutcome, String>;
-// Order: items non-empty -> check_password -> busy swap -> cancel reset -> cancel preview and take the gate -> build_tasks -> destination dialog
+// Order: items non-empty -> check_password -> parse_keys -> busy swap -> cancel reset -> cancel preview and take the gate -> build_tasks -> destination dialog
 // (merge: save dialog with merge_name; one item: save dialog with output_name; else folder picker)
 // -> File must not exist -> spawn_blocking(job::run) emitting "batch-progress" -> busy reset.
 
@@ -72,12 +72,17 @@ merge, layout, protection and image quality options. Photo outputs are PNG.
 
 #[tauri::command] async fn outline(state, id: String) -> Result<Vec<OutlineEntry>, String>;
 
-#[tauri::command] async fn preview(state, id: String, format: String, layout: Layout) -> Result<tauri::ipc::Response, String>;
+#[tauri::command] async fn preview(state, id: String, format: String, layout: Layout, watermark: Option<String>) -> Result<tauri::ipc::Response, String>;
 // Refused while busy. Cancels the previous preview, installs its own cancel flag, waits for the gate,
 // then job::preview_pdf on a blocking thread; returns the PDF bytes as a binary response.
+
+#[derive(Serialize)] struct KeyPair { public_key: String, path: String }
+#[tauri::command] async fn create_key_pair(state) -> Result<Option<KeyPair>, String>;
+// Holds `busy` like a batch, Err("A job is already running") when one runs. Save dialog suggesting "age-secret-key.txt"; None on cancel; refuses an existing file;
+// crypto::write_identity_file on a blocking thread; only the public key and the display path return to the page.
 ```
 
-Helpers: `register(state, path) -> Result<Option<Asset>>` (inspects kind, computes `outputs` for documents, `pdf::info` for PDFs, `inspect_image` for images), `lookup(state, id)`, `parse_format`, `build_tasks`, `check_password` (a new password is required for encrypt, and for convert only when a PDF output or a merge will be protected), `cancel_preview`, `engines_or_default`.
+Helpers: `register(state, path) -> Result<Option<Asset>>` (inspects kind, computes `outputs` for documents, `pdf::info` for PDFs, `inspect_image` for images), `lookup(state, id)`, `parse_format`, `build_tasks`, `check_password` (a new password is required for encrypt in its password modes, and for convert only when a PDF output or a merge will be protected; decrypt needs a password or a secret key), `parse_keys` (the recipient list in key mode and the secret key in decrypt, parsed with `crypto::parse_recipients` and `crypto::parse_identity` before any dialog), `cancel_preview`, `engines_or_default`.
 
 ### Startup
 
@@ -96,7 +101,8 @@ Helpers: `register(state, path) -> Result<Option<Asset>>` (inspects kind, comput
 | --- | --- |
 | no items | `Select at least one file.` |
 | new password under 12 chars | `Use a password with at least 12 characters.` |
-| decrypt without password | `Enter the password.` |
+| decrypt without password or secret key | `Enter the password or the secret key.` |
+| bad recipient list or secret key | the `crypto` messages in [01_converter_core.md](01_converter_core.md#error-strings) |
 | busy on pick or add | `A job is running` |
 | busy on run or preview | `A job is already running` |
 | mutex poisoned | `File state unavailable` |
@@ -141,3 +147,5 @@ Validates one registered existing PDF against the explicit requested standard,
 without rewriting it. Shares busy/cancel state and the preview gate with batches.
 Returns structured machine results and human-review status; no source path is
 accepted from IPC. UI issues and rule descriptions are rendered as text.
+
+Watermark requests default to `None`. `run_batch` invokes `job::validate_watermark` before the save dialog. `preview` validates text/ordinary-PDF eligibility and applies `watermark::apply` after `job::preview_pdf`; the existing PDF security gate remains in place.

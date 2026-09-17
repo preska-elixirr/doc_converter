@@ -12,6 +12,26 @@ source_sync: "manual"
 
 # Implementation status, 17 September 2026
 
+## Public-key encryption
+
+The Encrypt tab gained *Encrypted file for a recipient*: any file becomes a
+standard `.age` file for one or more `age1…` public keys, with no shared
+password. The Decrypt tab gained a *Secret key* field, and the file header
+decides whether the password or the key applies. *Create a key pair* writes a
+standard age key file through the save dialog and shows only the public key.
+Scope, messages and limits are in [Encryption](ENCRYPTION.md).
+
+Two reviews found that a pasted key file lost its line breaks in the
+single-line field, that key creation did not hold the busy flag, and that
+watermarked PDFs lost their text in PDF to TXT. All three are fixed and tested.
+
+Verification: `cargo test -p converter-core` passed all 46 tests, including
+four crypto tests and the new batch round trip; `cargo test -p doc-converter`
+passed its 3 tests; `cargo fmt --all --check`, `tsc --noEmit` and `vite build`
+passed. Not verified: the native save dialog and clipboard copy inside the
+running window, and opening the output with the `age` command-line tool, which
+is not installed on the development machine.
+
 ## Clean before sharing
 
 Added a dedicated English/Croatian tab for DOCX properties, comments, supported
@@ -32,7 +52,7 @@ automation and arbitrary Word-document compatibility remain unverified.
 - **Password-protect PDFs**: AES-256 open passwords on conversion output and on merged output.
 - **Page layout**: orientation (As is, Portrait, Landscape), margins, paragraph spacing, page breaks on Word body paragraphs and on Markdown/text blocks, applied by rewriting a DOCX copy or by the Typst engine; a live preview of the real output rendered with bundled PDF.js.
 - **Images tab**: WebP and TIFF input, WebP and one-page PDF output, per-row formats, batch processing.
-- **Encrypt tab**: password-protected PDF or `.age` file. **Decrypt tab**: unlock a PDF or restore an `.age` file.
+- **Encrypt tab**: password-protected PDF, `.age` file with a password, or `.age` file for a recipient's public key, plus key pair creation. **Decrypt tab**: unlock a PDF or restore an `.age` file with the password or the secret key.
 - **Queue**: multi-select table, select-all, drag and drop anywhere in the window, per-row status with live progress, `Clear all`, type badges, size and metadata line.
 - **Engines**: LibreOffice found without a system install, run in a private profile inside a job object, warmed up at startup; engine state shown in the queue footer.
 - **Batches**: several files to a chosen folder with numbered names, one file or a merge through a save dialog, per-item reports, cancellation that also stops LibreOffice.
@@ -70,7 +90,7 @@ XML cases and a real spreadsheet HTML export with an embedded image.
 - Installer, code signing, and shipping LibreOffice with its notices, or a guided prerequisite install.
 - Worker process isolation for the in-process engines; memory limits and network blocking for LibreOffice.
 - Licensing and activation (plan section 14).
-- PDF page ranges, rotation and per-source bookmarks in merges; PDF/A conversion of existing PDFs, watermarks, compression.
+- PDF page ranges, rotation and per-source bookmarks in merges; PDF/A conversion of existing PDFs, compression.
 - ODT page-layout rewrites; spreadsheet print options; font substitution warnings.
 - OCR, HEIC/AVIF, colour management, metadata preservation options.
 
@@ -79,3 +99,7 @@ See the root README for commands and current limits.
 ## PDF/A export — 17 September 2026
 
 Convert now offers PDF/A-1b, PDF/A-2b, PDF/A-3b, PDF/A-4, PDF/A-4f and PDF/UA-1 for Office and HTML sources through LibreOffice 25.8+. Local veraPDF validates final outputs before commit. PDF/A-3b and PDF/A-4f support associated files; existing PDFs can be checked without modification. PDF/UA reports explicitly require human review. Backend safeguards refuse unsupported combinations. The validator/runtime are installed for development but still need production packaging. See [PDF/A Export](PDF_A_EXPORT.md) for scope and [Build And Verification](BUILD_AND_VERIFICATION.md) for checks run.
+
+## Watermarks — 17 September 2026
+
+Convert supports local text watermarks on every page of ordinary PDF outputs, including existing PDFs and combined documents, before optional password protection. English and Croatian controls, backend eligibility checks, and regression tests are included. See [PDF Tools](PDF_TOOLS.md#watermarks) for limitations and [Build And Verification](BUILD_AND_VERIFICATION.md) for actual checks.

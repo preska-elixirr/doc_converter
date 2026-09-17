@@ -1,5 +1,5 @@
 :root{--bg:#f4f3f0;--paper:#fff;--ink:#262923;--muted:#686c63;--line:#e2e4dc;--green:#2f6f5e;--green-dark:#245548;--tint:#edf3ee;--amber:#8c5b24;--red:#a33b2f;--radius:12px;font-family:"IBM Plex Sans","Segoe UI",sans-serif;color:var(--ink);background:var(--bg);font-synthesis:none}
-*{box-sizing:border-box}body{margin:0}button,input,select{font:inherit;color:inherit}button{cursor:pointer;transition:background .15s,border-color .15s}button:disabled{cursor:not-allowed;opacity:.5}button:hover:not(:disabled){filter:brightness(.97)}
+*{box-sizing:border-box}body{margin:0}button,input,select,textarea{font:inherit;color:inherit}button{cursor:pointer;transition:background .15s,border-color .15s}button:disabled{cursor:not-allowed;opacity:.5}button:hover:not(:disabled){filter:brightness(.97)}
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #73a391;outline-offset:3px}
 p{margin:0;color:var(--muted);font-size:14px;line-height:1.6}h1,h2{margin:0}h1{font-size:32px;letter-spacing:-1.1px;font-weight:600;line-height:1.25}h2{font-size:17px;font-weight:600;letter-spacing:-.25px}
 .topbar{height:76px;padding:0 38px;background:var(--paper);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:16px}
@@ -34,7 +34,7 @@ td{padding:14px 0;border-bottom:1px solid #eef0e9;font-size:12px;vertical-align:
 .queue-bottom{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:13px;font-size:10px;color:var(--muted)}
 .settings{display:flex;flex-direction:column;overflow:hidden;align-self:start}.settings-heading{padding:22px;display:flex;align-items:center;gap:11px;border-bottom:1px solid var(--line)}.step{border:1px solid var(--line);border-radius:6px;padding:9px;color:var(--green);font:11px Consolas,monospace}.settings-heading h2{font-size:15px}.settings-heading p{font-size:11px;margin-top:4px}
 .settings-body{padding:22px;flex:1}.field-label{display:block;font-size:12px;font-weight:500;margin-bottom:9px}
-select,input[type=password],input[type=text]{border:1px solid #d4dacf;background:#fff;width:100%;height:39px;border-radius:6px;padding:8px 10px;font-size:12px;color:var(--ink)}select{cursor:pointer}
+select,textarea,input[type=password],input[type=text]{border:1px solid #d4dacf;background:#fff;width:100%;height:39px;border-radius:6px;padding:8px 10px;font-size:12px;color:var(--ink)}select{cursor:pointer}
 .hint{font-size:10px;margin-top:8px;line-height:1.6}.separator{height:1px;background:var(--line);margin:21px 0}
 .switch-row{display:flex;justify-content:space-between;gap:10px;align-items:center}.switch-row strong,.destination strong,.choice strong{display:block;font-size:12px;font-weight:500}.switch-row small{display:block;margin-top:5px;font-size:10px;color:var(--muted)}
 .switch-row input{appearance:none;width:32px;height:19px;border-radius:12px;background:#d9ddd4;position:relative;margin:0}.switch-row input:before{content:"";position:absolute;background:white;width:13px;height:13px;top:3px;left:3px;border-radius:50%;transition:transform .15s}.switch-row input:checked{background:var(--green)}.switch-row input:checked:before{transform:translateX(13px)}
@@ -69,3 +69,4 @@ footer{display:flex;align-items:center;justify-content:space-between;gap:20px;ma
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 
 .pdf-standards label{display:block;margin:8px 0;font-size:12px}.pdf-standards select,.pdf-standards input{display:block;width:100%;margin-top:4px}.attachment-item{margin:10px 0;padding:10px;border:1px solid #d4dacf;border-radius:6px;overflow-wrap:anywhere}.validation-details{max-width:320px;white-space:normal;font-size:11px;overflow-wrap:anywhere}.validation-details summary{cursor:pointer}.validation-details ul{padding-left:18px}.pdf-standards .secondary{margin:6px 0}
+textarea{height:auto;min-height:82px;resize:vertical;line-height:1.5}textarea#recipients,input.key{font-family:"IBM Plex Mono",Consolas,monospace;font-size:11px}.key-pair .secondary{margin:4px 0 14px}.key-pair .text-button{padding:6px 0}

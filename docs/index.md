@@ -25,16 +25,16 @@ Use this file as a discovery map, not as a required reading list. Start with `PR
 
 - [Engines](ENGINES.md) - LibreOffice detection, private profile, job object, and the built-in Typst, lopdf and image engines.
 - [Job Lifecycle](JOB_LIFECYCLE.md) - batches, destinations, the work folder, progress events, cancellation, and no-overwrite commits.
-- [IPC Commands And File Access](IPC_AND_FILE_ACCESS.md) - the seven commands, two events, backend-owned IDs, drag and drop, and the capability file.
+- [IPC Commands And File Access](IPC_AND_FILE_ACCESS.md) - the commands, two events, backend-owned IDs, drag and drop, and the capability file.
 - [Security And Privacy](SECURITY_AND_PRIVACY.md) - CSP, isolation, secret handling, limits, temporary data, and known gaps.
 
 ## Feature Systems
 
 - [Document Conversion](DOCUMENT_CONVERSION.md) - the capability matrix, routes per format pair, merging, and PDF protection on output.
 - [Page Layout](PAGE_LAYOUT.md) - orientation, margins, spacing, page breaks for DOCX and text, and the real-output preview.
-- [PDF Tools](PDF_TOOLS.md) - AES-256 passwords, unlock, merge, text extraction, image pages.
+- [PDF Tools](PDF_TOOLS.md) - AES-256 passwords, unlock, merge, text extraction, image pages, and text watermarks.
 - [PDF/A Export](PDF_A_EXPORT.md) - archival PDF/A-1b, PDF/A-2b, PDF/A-3b, PDF/A-4, PDF/A-4f and PDF/UA-1, supported inputs and validation limits.
-- [Encryption And Decryption](ENCRYPTION.md) - protected PDFs and `.age` files, and their reversal.
+- [Encryption And Decryption](ENCRYPTION.md) - protected PDFs, `.age` files with a password or for a recipient's public key, key pair creation, and their reversal.
 - [Image Conversion](IMAGE_CONVERSION.md) - PNG, JPEG, BMP, WebP, TIFF to PNG, JPG, WebP or PDF.
 - [Clean Before Sharing](CLEAN_BEFORE_SHARING.md) - DOCX review/hidden-content removal, PDF metadata removal, photo GPS/camera removal, and limits.
 - [File Queue](FILE_QUEUE.md) - the multi-select table, eligibility per mode, statuses.

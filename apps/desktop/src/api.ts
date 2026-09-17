@@ -54,11 +54,18 @@ export type BatchRequest = {
   layout: Layout;
   password: string;
   protect: boolean;
-  encryption: 'pdf' | 'file';
+  watermark: string | null;
+  encryption: 'pdf' | 'file' | 'key';
+  /** Encrypt for a recipient: public keys, one per line. */
+  recipients: string;
+  /** Decrypt: the secret key for .age files encrypted to a public key. */
+  identity: string;
   image: { max_edge: number; quality: number };
   attachments: Omit<AttachmentSelection, 'name'>[];
 };
 export type BatchOutcome = { result: 'saved' | 'cancelled' | 'nothing'; reports: ItemReport[] };
+/** A new age key pair: the public key to share and where the secret key file went. */
+export type KeyPair = { public_key: string; path: string };
 export type AssetOutputs = { id: string; outputs: Availability[] };
 export type PdfSecurityReport = {
   javascript: boolean | null;
@@ -81,8 +88,9 @@ export const api = {
   runBatch: (request: BatchRequest) => invoke<BatchOutcome>('run_batch', { request }),
   cancel: () => invoke<void>('cancel_job'),
   outline: (id: string) => invoke<OutlineEntry[]>('outline', { id }),
-  preview: (id: string, format: string, layout: Layout) => invoke<ArrayBuffer>('preview', { id, format, layout }),
+  preview: (id: string, format: string, layout: Layout, watermark: string | null = null) => invoke<ArrayBuffer>('preview', { id, format, layout, watermark }),
   refreshOutputs: (ids: string[]) => invoke<AssetOutputs[]>('refresh_outputs', { ids }),
+  createKeyPair: () => invoke<KeyPair | null>('create_key_pair'),
 };
 
 export function formatBytes(bytes: number): string {

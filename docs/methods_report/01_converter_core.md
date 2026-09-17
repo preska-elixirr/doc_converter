@@ -77,10 +77,21 @@ pub fn capabilities(kind: InputKind, engines: &Engines) -> Vec<Availability>;  /
 ### `crypto.rs`
 
 ```rust
+pub use age::x25519::{Identity, Recipient};   // secret key and public key types; Identity has no Debug or Display
+pub const MAX_RECIPIENTS: usize = 20;
 pub fn encrypt(source: &Path, destination: &Path, password: SecretString, cancel: &AtomicBool) -> Result<()>;
 // age passphrase (scrypt) stream; no password length check here.
-pub fn decrypt(source: &Path, destination: &Path, password: SecretString, cancel: &AtomicBool) -> Result<()>;
-// Requires an scrypt recipient; authenticates the header before creating the temp file.
+pub fn encrypt_for(source: &Path, destination: &Path, recipients: &[Recipient], cancel: &AtomicBool) -> Result<()>;
+// age X25519 stream for 1..=20 public keys; no password; an empty list is refused.
+pub fn decrypt(source: &Path, destination: &Path, password: Option<&SecretString>, identity: Option<&Identity>, cancel: &AtomicBool) -> Result<()>;
+// Reads the header first: an scrypt file needs `password`, an X25519 file needs `identity`, and the error names the missing one.
+// Checks the header before creating the temp file; the payload is authenticated while streaming, before commit.
+pub fn parse_recipients(text: &str) -> Result<Vec<Recipient>>;
+// One `age1…` key per line; blank lines and `#` comments skipped; duplicates dropped; errors name the line; 1..=20 keys.
+pub fn parse_identity(text: &str) -> Result<Identity>;
+// Finds the `AGE-SECRET-KEY-1…` token anywhere: a bare line, a whole key file, or that file flattened to one line; a public key is refused.
+pub fn write_identity_file(destination: &Path, cancel: &AtomicBool) -> Result<String>;
+// Generates a key pair, writes the standard age key file (created, public key, secret key lines) without overwriting, returns the public key.
 ```
 
 ### `images.rs`
@@ -195,18 +206,18 @@ Implementation details and privacy scope: [`../CLEAN_BEFORE_SHARING.md`](../CLEA
 
 ```rust
 #[serde(tag = "op", rename_all = "lowercase")]
-pub enum Action { Convert { format: OutputFormat }, Image { format: String }, Protect, Unlock, Encrypt, Decrypt, Clean }
+pub enum Action { Convert { format: OutputFormat }, Image { format: String }, Protect, Unlock, Encrypt, EncryptFor, Decrypt, Clean }
 pub struct Task { pub source: PathBuf, pub name: String, pub kind: InputKind, pub action: Action, pub page_breaks: Vec<usize> }
 impl Task { pub fn layout(&self, batch: &Batch) -> Layout; }   // batch layout with this task's breaks
 #[serde(default)] pub struct ImageSettings { pub max_edge: u32, pub quality: u8 }
-pub struct Batch { pub tasks: Vec<Task>, pub merge: bool, pub layout: Layout, pub password: Option<SecretString>, pub protect: bool, pub image: ImageSettings, pub attachments: Vec<Attachment> }
+pub struct Batch { pub tasks: Vec<Task>, pub merge: bool, pub layout: Layout, pub password: Option<SecretString>, pub protect: bool, pub watermark: Option<String>, pub image: ImageSettings, pub attachments: Vec<Attachment>, pub recipients: Vec<Recipient>, pub identity: Option<Identity> }
 pub enum Destination { Folder(PathBuf), File(PathBuf) }
 #[serde(rename_all = "lowercase")] pub enum Status { Queued, Working, Done, Failed, Cancelled }
 pub struct ItemReport { pub index: usize, pub status: Status, pub detail: String, pub output: Option<String>, pub validation: Option<ValidationReport> }
 
 pub fn output_name(task: &Task, batch: &Batch) -> String;
 // Convert "{stem}.{ext}", Image "{stem}.{format}", Protect "{stem}-protected.pdf", Unlock "{stem}-unlocked.pdf",
-// Encrypt "{name}.age", Decrypt "restored-{name minus .age}", Clean "{stem}-clean.{docx|pdf|png}".
+// Encrypt and EncryptFor "{name}.age", Decrypt "restored-{name minus .age}", Clean "{stem}-clean.{docx|pdf|png}".
 pub fn convert_document(source: &Path, kind: InputKind, format: OutputFormat, layout: &Layout, engines: &Engines, work: &Path, tag: &str, cancel: &AtomicBool) -> Result<PathBuf>;
 // Runs the route into work/{tag}.{ext} (or LibreOffice's own name) and returns it.
 pub fn preview_pdf(source: &Path, kind: InputKind, target: OutputFormat, layout: &Layout, engines: &Engines, cancel: &AtomicBool) -> Result<Vec<u8>>;
@@ -227,14 +238,14 @@ pub fn run(batch: &Batch, destination: &Destination, engines: &Engines, cancel: 
 | any cancel point | `Cancelled. No output was saved.` |
 | `output` | `Output already exists. Choose another name.` |
 | `output` | `Invalid destination` |
-| `decrypt` | `Not a supported age encrypted file.` / `This build supports password-encrypted age files only.` / `Incorrect password or damaged encrypted file.` |
+| `crypto` | `Not a supported age encrypted file.` / `This file was encrypted with a password. Enter the password.` / `This file was encrypted to a public key. Enter the matching secret key.` / `Incorrect password or damaged encrypted file.` / `The secret key does not match this file.` / `Damaged encrypted file.` / `Enter at least one public key.` / `At most 20 public keys are allowed.` / `Line {n}: not an age public key. A public key starts with age1.` / `Line {n}: this is a secret key. Enter the public key that starts with age1.` / `Enter the secret key.` / `This is a public key. Enter the secret key that starts with AGE-SECRET-KEY-1.` / `Not an age secret key. A secret key starts with AGE-SECRET-KEY-1.` |
 | `images` | `Invalid image settings.` / `This build converts static PNG, JPG, BMP, WebP and TIFF inputs.` / `Animated PNG is not supported; no frames were discarded.` / `Animated WebP is not supported; no frames were discarded.` / `Multi-page TIFF is not supported; no pages were discarded.` / `Choose PNG, JPG, WebP or PDF output.` |
 | `pdf` | `Unreadable PDF: …` / `This PDF already has a password. Unlock it first, then protect it again.` / `Incorrect password or damaged PDF.` / `This PDF has no password.` / `{name} has a password. Unlock it before merging.` / `{name} has no pages.` / `Nothing to merge.` |
 | `office` | `Could not start LibreOffice: …` / `LibreOffice could not convert {names} (…)` / `LibreOffice exited with {status}. …` / `LibreOffice took too long and was stopped.` |
 | `capability` | `LibreOffice was not found. Install it or copy it to the engines folder, then restart.` and the per-kind reasons |
 | `docx` | `Not a Word document.` / `Unreadable DOCX: …` / `DOCX part is not UTF-8.` |
 | `layout` | `Layout engine error: …` / `Could not write PDF: …` |
-| `job` | `A combined document needs a file name.` / `Enter a password.` / `Enter the password.` / `Could not create a temporary folder: …` |
+| `job` | `A combined document needs a file name.` / `Enter a password.` / `Could not create a temporary folder: …` |
 
 ### Tests
 
@@ -274,3 +285,19 @@ cancellation. Parses exactly one matching validation report and a successful
 batch summary. Non-compliant results are returned with issues; operational failures
 are errors. `Error::Validation(ValidationReport)` carries a failed export's report
 into `ItemReport.validation`. PDF/UA-1 always requires human review after machine checks.
+
+### `watermark.rs`
+
+`pub fn validate(text: &str) -> Result<()>` rejects whitespace-only labels,
+controls and labels over 80 Unicode scalar values.
+`pub fn apply(bytes: &[u8], text: &str, cancel: &AtomicBool) -> Result<Vec<u8>>`
+returns a PDF whose pages keep their content streams, wrapped in q/Q, followed by an embedded-font, translucent text Form under a page-unique resource name;
+refuses locked/empty PDFs, invalid geometry and unreadable content streams.
+It does not write files. See [PDF Tools](../PDF_TOOLS.md#watermarks).
+
+`job::Batch.watermark: Option<String>` defaults to no overlay in callers.
+`pub fn job::validate_watermark(batch: &Batch) -> Result<()>` validates the label
+and requires every task to be `Action::Convert { format: OutputFormat::Pdf }`.
+The desktop checks this before destination selection and `job::run` repeats it
+before processing. Merges apply one overlay after merging; separate conversions
+apply it before final copy/protection. No public core preview signature changed.

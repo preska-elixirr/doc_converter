@@ -97,7 +97,7 @@ For a combined document all items are converted first (each reported `Working` t
 | Image | `<stem>.<png, jpg, webp or pdf>` |
 | Protect | `<stem>-protected.pdf` |
 | Unlock | `<stem>-unlocked.pdf` |
-| Encrypt | `<full name>.age` |
+| Encrypt, Encrypt for recipients | `<full name>.age` |
 | Decrypt | `restored-<name without .age>` |
 | Clean | `<stem>-clean.docx`, `<stem>-clean.pdf`, or `<stem>-clean.png` for photos |
 | Merge | the *Output filename* field, `.pdf` added if missing |

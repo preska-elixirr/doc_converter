@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import {
   api, desktop, formatBytes,
-  type Asset, type BatchRequest, type EngineStatus, type ImageFormat, type ItemReport,
+  type Asset, type BatchRequest, type EngineStatus, type ImageFormat, type ItemReport, type KeyPair,
   type Layout, type Margins, type Mode, type Orientation, type OutlineEntry, type OutputFormat,
   type Spacing, type Status,
 } from './api';
@@ -22,7 +22,7 @@ type Row = Asset & {
   output?: string;
   validation?: ValidationReport | null;
 };
-type Protection = 'pdf' | 'file';
+type Protection = 'pdf' | 'file' | 'key';
 type ResultBar = { title: string; detail: string; done: number; total: number; finished: boolean };
 type T = (key: Key, vars?: Record<string, string | number>) => string;
 type TN = (key: Key, count: number, vars?: Record<string, string | number>) => string;
@@ -76,7 +76,7 @@ function blocked(row: Row, mode: Mode, protection: Protection): Key | null {
     case 'images':
       return row.image ? null : 'reason.unsupported';
     case 'encrypt':
-      if (protection === 'file') return null;
+      if (protection !== 'pdf') return null;
       if (row.kind !== 'pdf') return 'reason.pdf_required';
       return row.pdf?.encrypted ? 'reason.already_protected' : null;
     case 'decrypt':
@@ -120,9 +120,16 @@ export function App() {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [show, setShow] = useState(false);
+  const [recipients, setRecipients] = useState('');
+  const [identity, setIdentity] = useState('');
+  const [keyPair, setKeyPair] = useState<KeyPair | null>(null);
+  const [creatingKey, setCreatingKey] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [batchFormat, setBatchFormat] = useState<OutputFormat>('pdf');
   const [attachments, setAttachments] = useState<AttachmentSelection[]>([]);
   const [protect, setProtect] = useState(false);
+  const [watermarkEnabled, setWatermarkEnabled] = useState(false);
+  const [watermarkText, setWatermarkText] = useState('Confidential');
   const [merge, setMerge] = useState(false);
   const [mergeName, setMergeName] = useState('Combined documents.pdf');
   const [orientation, setOrientation] = useState<Orientation>('keep');
@@ -192,14 +199,20 @@ export function App() {
   const hasArchival = mode === 'convert' && selected.some((r) => standardPdf(r.target));
   const attachmentConflict = mode === 'convert' && ((attachments.length > 0 && (merging || selected.some((r) => !attachmentFormat(r.target)))) || (attachments.length === 0 && selected.some((r) => r.target === 'pdfa4f')));
   const archivalConflict = hasArchival && (protect || merging);
+  const watermarkConflict = mode === 'convert' && watermarkEnabled && (
+    !watermarkText.trim() || [...watermarkText].length > 80 || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(watermarkText) ||
+    hasArchival || (!merging && selected.some((r) => r.target !== 'pdf')));
   const skipped = rows.filter((r) => r.selected && blocked(r, mode, protection)).length;
+  const keyMode = mode === 'encrypt' && protection === 'key';
   const needsPassword =
-    mode === 'encrypt' || mode === 'decrypt' ||
+    (mode === 'encrypt' && !keyMode) || mode === 'decrypt' ||
     (mode === 'convert' && protect && (merging || selected.some((r) => r.target === 'pdf')));
-  const passwordValid = !needsPassword || (mode === 'decrypt' ? password.length > 0 : [...password].length >= 12 && password === confirm);
+  const passwordValid = !needsPassword || (mode === 'decrypt' ? password.length > 0 || identity.trim().length > 0 : [...password].length >= 12 && password === confirm);
+  // The backend parses every line; the page only insists on one non-comment line.
+  const recipientsValid = !keyMode || recipients.split(/\r?\n/).some((line) => line.trim() && !line.trim().startsWith('#'));
   const targetsValid = mode !== 'convert' || merging ||
     selected.every((r) => r.outputs.some((o) => o.format === r.target && o.available));
-  const valid = desktop && selected.length > 0 && passwordValid && targetsValid && !archivalConflict && !attachmentConflict && (!hasArchival || !!engine?.validator) && (!merging || mergeName.trim().length > 0);
+  const valid = desktop && selected.length > 0 && passwordValid && recipientsValid && targetsValid && !archivalConflict && !watermarkConflict && !attachmentConflict && (!hasArchival || !!engine?.validator) && (!merging || mergeName.trim().length > 0);
   const layoutVisible = mode === 'convert' && (merging || selected.some((r) => r.target === 'pdf' || standardPdf(r.target) || r.target === 'docx'));
   const previewCandidates = useMemo(
     () => selected.filter((r) => merging || r.target === 'pdf' || standardPdf(r.target) || r.target === 'docx'),
@@ -283,18 +296,18 @@ export function App() {
     let live = true;
     setPreviewState('loading');
     const timer = window.setTimeout(() => {
-      api.preview(previewId, previewFormat, layoutFor(previewId))
+      api.preview(previewId, previewFormat, layoutFor(previewId), watermarkEnabled ? watermarkText : null)
         .then((buffer) => { if (live) { setPreviewData(buffer); setPreviewState('ready'); setPreviewError(''); } })
         .catch((e) => { if (live) { setPreviewData(null); setPreviewState('error'); setPreviewError(String(e)); } });
     }, 700);
     return () => { live = false; window.clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewId, previewFormat, orientation, margins, spacing, breaksKey, layoutVisible, busy]);
+  }, [previewId, previewFormat, orientation, margins, spacing, breaksKey, layoutVisible, busy, watermarkEnabled, watermarkText]);
 
   function switchMode(next: Mode) {
     if (busy) return;
     setMode(next);
-    setPassword(''); setConfirm(''); setShow(false);
+    setPassword(''); setConfirm(''); setIdentity(''); setShow(false); setCopied(false);
     setResult(null); setError('');
     setRows((current) => current.map((r) => ({ ...r, state: 'ready', detail: '', output: undefined })));
   }
@@ -330,6 +343,34 @@ export function App() {
     });
   }
 
+  async function createKeyPair() {
+    setCreatingKey(true); setError(''); setCopied(false);
+    try {
+      const pair = await api.createKeyPair();
+      if (pair) setKeyPair(pair);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setCreatingKey(false);
+    }
+  }
+
+  async function copyPublicKey() {
+    if (!keyPair) return;
+    try { await navigator.clipboard.writeText(keyPair.public_key); setCopied(true); } catch { setCopied(false); }
+  }
+
+  function addOwnKey() {
+    if (!keyPair) return;
+    const key = keyPair.public_key;
+    setRecipients((current) => {
+      if (current.split(/\r?\n/).some((line) => line.trim() === key)) return current;
+      const kept = current.replace(/\s+$/, '');
+      return kept ? `${kept}\n${key}` : key;
+    });
+    setResult(null);
+  }
+
   async function run() {
     if (!valid || mode === 'license') return;
     const batch = selected;
@@ -346,7 +387,10 @@ export function App() {
       layout: { orientation, margins, spacing, page_breaks: [] },
       password,
       protect: mode === 'convert' && protect,
+      watermark: mode === 'convert' && watermarkEnabled ? watermarkText : null,
       encryption: protection,
+      recipients: keyMode ? recipients : '',
+      identity: mode === 'decrypt' ? identity : '',
       image: { max_edge: imageSize, quality: imageQuality },
       attachments: mode === 'convert' ? attachments.map(({ id, relationship, description }) => ({ id, relationship, description })) : [],
     };
@@ -370,7 +414,7 @@ export function App() {
       setRows((current) => current.map((r) => (ids.includes(r.id) ? { ...r, state: 'ready', detail: '' } : r)));
       setResult({ title: 'could_not_start', detail: String(e), done: 0, total: ids.length, finished: true });
     } finally {
-      setBusy(false); setPassword(''); setConfirm('');
+      setBusy(false); setPassword(''); setConfirm(''); setIdentity('');
     }
   }
 
@@ -418,6 +462,21 @@ export function App() {
   const officeMissing = engine?.ready && !engine.office;
   const orientationWord = t(orientation === 'landscape' ? 'layout.o.landscape' : orientation === 'portrait' ? 'layout.o.portrait' : 'layout.o.keep');
   const resultTexts = result ? resultText(result) : null;
+  const keyPairPanel = (
+    <div className="key-pair">
+      <div className="separator"></div>
+      <p className="field-label">{t('keys.title')}</p>
+      <p className="hint">{t('keys.hint')}</p>
+      <button className="secondary" disabled={busy || creatingKey || !desktop} onClick={createKeyPair}>{creatingKey ? t('keys.creating') : t('keys.create')}</button>
+      {keyPair && (<>
+        <label className="field-label" htmlFor="public-key">{t('keys.public')}</label>
+        <div className="password-field"><input id="public-key" className="key" type="text" readOnly value={keyPair.public_key} onFocus={(e) => e.currentTarget.select()} /><button className="text-button" onClick={copyPublicKey}>{copied ? t('keys.copied') : t('keys.copy')}</button></div>
+        {keyMode && <button className="text-button" disabled={busy} onClick={addOwnKey}>{t('recipients.add_own')}</button>}
+        <p className="hint">{t('keys.saved', { path: keyPair.path })}</p>
+        <p className="password-warning">{t('keys.warning')}</p>
+      </>)}
+    </div>
+  );
 
   return (
     <div className={`app${dragging ? ' dragging' : ''}`}>
@@ -559,6 +618,13 @@ export function App() {
                     <div className="separator"></div>
                     <label className="switch-row"><span><strong>{t('convert.protect')}</strong><small>{t('convert.protect_small')}</small></span><input type="checkbox" role="switch" disabled={busy || (hasArchival && !protect)} checked={protect} onChange={(e) => setProtect(e.target.checked)} /></label>
                     <p className="hint">{t('convert.protect_hint')}</p>
+                    <label className="switch-row"><span><strong>{t('watermark.title')}</strong><small>{t('watermark.subtitle')}</small></span><input type="checkbox" role="switch" disabled={busy} checked={watermarkEnabled} onChange={(e) => { setWatermarkEnabled(e.target.checked); setResult(null); }} /></label>
+                    {watermarkEnabled && <>
+                      <label className="field-label" htmlFor="watermark-text">{t('watermark.label')}</label>
+                      <input id="watermark-text" type="text" disabled={busy} value={watermarkText} placeholder="Confidential" onChange={(e) => { setWatermarkText(e.target.value); setResult(null); }} aria-describedby="watermark-hint" />
+                      <p id="watermark-hint" className="hint">{t('watermark.hint')}</p>
+                      {watermarkConflict && <p className="error" role="alert">{t('watermark.error')}</p>}
+                    </>}
                     <div className="separator"></div>
                     <label className="switch-row"><span><strong>{t('convert.merge')}</strong><small>{t('convert.merge_small')}</small></span><input type="checkbox" role="switch" disabled={busy || (hasArchival && !merge)} checked={merge} onChange={(e) => { setMerge(e.target.checked); setResult(null); }} /></label>
                     {merging && (<div className="merge-name-field"><label className="field-label" htmlFor="merge-name">{t('convert.merge_name')}</label><input id="merge-name" type="text" disabled={busy} value={mergeName} onChange={(e) => setMergeName(e.target.value)} /><p className="hint">{t('convert.merge_hint')}</p></div>)}
@@ -592,8 +658,15 @@ export function App() {
                     <span className="field-label">{t('encrypt.type')}</span>
                     <label className="choice"><input type="radio" name="encryption-type" value="pdf" disabled={busy} checked={protection === 'pdf'} onChange={() => { setProtection('pdf'); setResult(null); }} /><span><strong>{t('encrypt.pdf')}</strong><small>{t('encrypt.pdf_small')}</small></span></label>
                     <label className="choice"><input type="radio" name="encryption-type" value="file" disabled={busy} checked={protection === 'file'} onChange={() => { setProtection('file'); setResult(null); }} /><span><strong>{t('encrypt.file')}</strong><small>{t('encrypt.file_small')}</small></span></label>
-                    <p className="hint">{protection === 'pdf' ? t('encrypt.hint_pdf') : t('encrypt.hint_file')}</p>
-                    <div className="separator"></div>
+                    <label className="choice"><input type="radio" name="encryption-type" value="key" disabled={busy} checked={protection === 'key'} onChange={() => { setProtection('key'); setResult(null); }} /><span><strong>{t('encrypt.key')}</strong><small>{t('encrypt.key_small')}</small></span></label>
+                    <p className="hint">{protection === 'pdf' ? t('encrypt.hint_pdf') : protection === 'file' ? t('encrypt.hint_file') : t('encrypt.hint_key')}</p>
+                    {keyMode ? (<>
+                      <div className="separator"></div>
+                      <label className="field-label" htmlFor="recipients">{t('recipients.label')}</label>
+                      <textarea id="recipients" rows={3} autoComplete="off" spellCheck={false} disabled={busy} value={recipients} placeholder="age1…" onChange={(e) => { setRecipients(e.target.value); setResult(null); }} aria-describedby="recipients-hint" />
+                      <p id="recipients-hint" className="hint">{t('recipients.hint')}</p>
+                      {keyPairPanel}
+                    </>) : <div className="separator"></div>}
                   </div>
                 )}
                 {mode === 'decrypt' && (<div><div className="info"><strong>{t('decrypt.title')}</strong><p>{t('decrypt.text')}</p></div><div className="separator"></div></div>)}
@@ -605,12 +678,20 @@ export function App() {
                     {mode !== 'decrypt' && (<div className="confirm-field"><label className="field-label" htmlFor="confirm-password">{t('password.confirm')}</label><input type={show ? 'text' : 'password'} id="confirm-password" autoComplete="off" disabled={busy} value={confirm} onChange={(e) => setConfirm(e.target.value)} /><p className="error" aria-live="polite">{confirm && confirm !== password ? t('password.mismatch') : ''}</p><p className="password-warning">{t('password.warning')}</p></div>)}
                   </div>
                 )}
+                {mode === 'decrypt' && (
+                  <div className="password-settings">
+                    <label className="field-label" htmlFor="identity">{t('identity.label')}</label>
+                    <div className="password-field"><input type={show ? 'text' : 'password'} id="identity" className="key" autoComplete="off" spellCheck={false} disabled={busy} value={identity} placeholder="AGE-SECRET-KEY-1…" onChange={(e) => setIdentity(e.target.value)} aria-describedby="identity-hint" /><button className="text-button" disabled={busy} onClick={() => setShow(!show)} aria-label={show ? t('password.hide_label') : t('password.show_label')}>{show ? t('password.hide') : t('password.show')}</button></div>
+                    <p id="identity-hint" className="hint">{t('identity.hint')}</p>
+                    {keyPairPanel}
+                  </div>
+                )}
                 <div className="separator"></div>
                 <div className="destination"><span className="folder-icon" aria-hidden="true">↳</span><div><strong>{t('destination.title')}</strong><p>{selected.length > 1 && !merging ? t('destination.folder') : t('destination.location')}</p></div></div>
               </div>
               <div className="action-area">
                 <div className="summary"><span>{tn(mode === 'images' ? 'summary.images' : 'summary.documents', selected.length)}</span><strong>{summaryType}</strong></div>
-                <button className="primary" disabled={!valid || busy} onClick={run}>{actionLabel} <span aria-hidden="true">→</span></button>
+                <button className="primary" disabled={!valid || busy || creatingKey} onClick={run}>{actionLabel} <span aria-hidden="true">→</span></button>
                 {busy && <button className="secondary cancel" onClick={() => { api.cancel().catch(() => undefined); setResult((c) => (c ? { ...c, title: 'stopping' } : c)); }}>{t('action.cancel')}</button>}
                 <p className="action-note">{skipped ? `${tn('note.skipped', skipped)} · ` : ''}{!targetsValid ? `${t('note.targets')} · ` : ''}{t('note.copies')}</p>
               </div>

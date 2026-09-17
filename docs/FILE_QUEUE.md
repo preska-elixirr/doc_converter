@@ -50,7 +50,7 @@ Owning files:
 | Images | PNG, JPG, BMP, WebP, TIFF | `Unsupported file` |
 | Clean before sharing | DOCX, unencrypted PDF, static images | `Decrypt before cleaning`, `Unsupported file`; decoder/revision failures are reported per item |
 | Encrypt, password-protected PDF | PDF without a password | `PDF required`, `Already protected` |
-| Encrypt, encrypted file | anything | none |
+| Encrypt, encrypted file with a password or for a recipient | anything | none |
 | Decrypt | locked PDF, `.age` | `No password set`, `Unsupported file` |
 
 Kinds come from the backend's content sniffing, so a `.txt` that is really a PDF is treated as a PDF.

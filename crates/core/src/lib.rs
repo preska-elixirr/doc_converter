@@ -19,6 +19,7 @@ pub mod pdf_security;
 pub mod pdf_standards;
 pub mod text;
 pub mod validation;
+pub mod watermark;
 
 use std::{
     fs::File,

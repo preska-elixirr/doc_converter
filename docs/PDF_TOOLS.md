@@ -73,6 +73,41 @@ In `crates/core/src/pdf.rs`:
 ## Not implemented
 
 - Page ranges, page reordering and rotation in the UI (the core can rotate by setting `Rotate`, but no command exposes it).
-- PDF/A conversion of existing PDFs, watermarks and compression. Archival export of Office/HTML sources is covered in [PDF/A Export](PDF_A_EXPORT.md).
+- PDF/A conversion of existing PDFs and compression. Archival export of Office/HTML sources is covered in [PDF/A Export](PDF_A_EXPORT.md).
 - Owner passwords and permission flags.
 - Bookmarks per merged source.
+
+## Watermarks
+
+In Convert, enable **Watermark every page** and keep “Confidential” or enter a
+recipient name (1–80 characters, one line). Select ordinary PDF for all selected
+files, or combine them into one PDF. Existing unlocked PDFs use the PDF copy
+route. DOCX and other document sources are converted first. Images-tab outputs,
+non-PDF outputs, PDF/A and PDF/UA export are not eligible; Rust rejects the whole
+batch before writing instead of silently leaving some files unmarked.
+
+`watermark.rs` renders literal text with the local Typst engine and embedded
+fonts, then uses a shared PDF Form XObject with 22% opacity on every page. It
+centres a diagonal label inside the visible MediaBox/CropBox intersection,
+resolves inherited resources and rotation, and fits the label to page size.
+The original content streams stay in place, wrapped in `q`/`Q`, and the label
+is appended after them, so text extraction (including this app's PDF to TXT)
+and other readers still see the text. The label's resource names are chosen
+to avoid the page's own. MediaBox and CropBox corners are accepted in any order. Undecodable page streams fail
+rather than being omitted; decompression is bounded to 64 MiB per page.
+
+Merged documents are marked after merging, and password protection runs after
+watermarking. Source bytes are preserved and final writes use the existing
+no-overwrite commit. Cancellation is checked before rendering, between pages,
+and before returning/committing bytes. Rendering itself is not interruptible.
+The label stays in process and local temporary files; it is not persisted as a
+UI preference or sent to a network service.
+
+Limitations: one label applies to the whole batch; there is no recipient-list
+mail merge, placement/font control, or DOCX watermark output. Font coverage is
+limited to the bundled fonts (Croatian names are covered). A watermark is an
+editable visual label, not access control or redaction. Editing signed PDFs
+invalidates their signatures; preservation of tagged-PDF accessibility and
+archival compliance is not guaranteed. Annotations remain above page content
+and can obscure it. Existing PDF preview security restrictions still apply;
+the conversion preview for non-PDF sources shows the watermark.

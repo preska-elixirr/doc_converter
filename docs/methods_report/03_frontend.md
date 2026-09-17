@@ -35,9 +35,10 @@ type Status = 'queued' | 'working' | 'done' | 'failed' | 'cancelled';
 type ItemReport = { index: number; status: Status; detail: string; output: string | null; validation: ValidationReport | null };
 type EngineStatus = { validator: boolean; ready: boolean; office: { path: string; version: string; markdown: boolean } | null };
 type BatchRequest = { mode: Exclude<Mode, 'license'>; items: { id: string; format?: string; page_breaks?: number[] }[];
-                      merge: boolean; merge_name: string; layout: Layout; password: string; protect: boolean;
-                      encryption: 'pdf' | 'file'; image: { max_edge: number; quality: number }; attachments: Omit<AttachmentSelection, 'name'>[] };
+                      merge: boolean; merge_name: string; layout: Layout; password: string; protect: boolean; watermark: string | null;
+                      encryption: 'pdf' | 'file' | 'key'; recipients: string; identity: string; image: { max_edge: number; quality: number }; attachments: Omit<AttachmentSelection, 'name'>[] };
 type BatchOutcome = { result: 'saved' | 'cancelled' | 'nothing'; reports: ItemReport[] };
+type KeyPair = { public_key: string; path: string };   // the public key to share and where the secret key file went
 type AssetOutputs = { id: string; outputs: Availability[] };
 
 const desktop: boolean;   // isTauri()
@@ -48,8 +49,9 @@ const api = {
   runBatch(request: BatchRequest): Promise<BatchOutcome>,   // invoke('run_batch', { request })
   cancel(): Promise<void>,                       // invoke('cancel_job')
   outline(id: string): Promise<OutlineEntry[]>,  // invoke('outline', { id })
-  preview(id: string, format: string, layout: Layout): Promise<ArrayBuffer>,  // invoke('preview', { id, format, layout })
+  preview(id: string, format: string, layout: Layout, watermark?: string | null): Promise<ArrayBuffer>,  // invoke('preview', { id, format, layout, watermark })
   refreshOutputs(ids: string[]): Promise<AssetOutputs[]>,      // invoke('refresh_outputs', { ids })
+  createKeyPair(): Promise<KeyPair | null>,      // invoke('create_key_pair'); null when the save dialog is cancelled
 };
 function formatBytes(bytes: number): string;     // "1.2 MB" or "640 KB"
 ```
@@ -72,7 +74,7 @@ function detectLanguage(): Language;                       // navigator.language
 ```typescript
 type RowState = 'ready' | Status;
 type Row = Asset & { selected: boolean; target: OutputFormat; imageTarget: ImageFormat; state: RowState; detail: string; output?: string };
-type Protection = 'pdf' | 'file';
+type Protection = 'pdf' | 'file' | 'key';
 type ResultBar = { title: string; detail: string; done: number; total: number; finished: boolean };
 // title is a code: 'choose' | '' (progress) | 'save_cancelled' | 'stopping' | 'could_not_start' | 'done' | 'stopped' | 'nothing';
 // detail carries the numbers, so a language change re-renders the bar.
@@ -93,6 +95,7 @@ Component state, in addition to the batch state listed below: `language: Languag
 
 ```typescript
 mode: Mode; rows: Row[]; protection: Protection; password, confirm: string; show: boolean
+recipients, identity: string; keyPair: KeyPair | null; creatingKey, copied: boolean
 batchFormat: OutputFormat; protect: boolean; merge: boolean; mergeName: string
 orientation: Orientation; margins: Margins; spacing: Spacing; breaks: Record<string, number[]>
 imageFormat: ImageFormat; imageQuality: number (85); imageSize: number (0)
@@ -109,10 +112,12 @@ t = (key, vars) => translate(language, key, vars);  tn = (key, count, vars) => t
 merging = mode === 'convert' && merge
 outputFor(row) = merging ? 'pdf' : mode === 'images' ? row.imageTarget : row.target
 selected = rows.filter(r => r.selected && !blocked(r, mode, protection))
-needsPassword = encrypt || decrypt || (convert && protect && (merging || some selected row targets pdf))
-passwordValid = !needsPassword || (decrypt ? password.length > 0 : [...password].length >= 12 && password === confirm)
+keyMode = encrypt && protection === 'key'
+needsPassword = (encrypt && !keyMode) || decrypt || (convert && protect && (merging || some selected row targets pdf))
+passwordValid = !needsPassword || (decrypt ? password.length > 0 || identity.trim().length > 0 : [...password].length >= 12 && password === confirm)
+recipientsValid = !keyMode || some line of recipients is non-empty and not a `#` comment   // the backend parses every line
 targetsValid = mode !== 'convert' || merging || every selected row can reach its target
-valid = desktop && selected.length > 0 && passwordValid && targetsValid && (!merging || mergeName.trim())
+valid = desktop && selected.length > 0 && passwordValid && recipientsValid && targetsValid && (!merging || mergeName.trim())
 layoutVisible = convert && (merging || some selected row targets pdf or docx)
 previewCandidates = selected rows with pdf/docx target (all when merging)
 layoutFor(id) = { orientation, margins, spacing, page_breaks: breaks[id] ?? [] }
@@ -126,7 +131,7 @@ Effects:
 - on mount (desktop only): `engineStatus` (which also calls `refreshOutputs` for queued rows once engines are ready), listeners for `engines-ready` and `batch-progress`, `onDragDropEvent`
 - keep `previewId` inside `previewCandidates`; load the outline; request a preview for the row's target format 700 ms after a layout or format change unless busy
 
-Handlers: `switchMode(next)`, `add()`, `update(id, patch)`, `toggleBreak(id, index)`, `move(id, delta)`, `run()`, `resultText(bar)`.
+Handlers: `switchMode(next)`, `add()`, `update(id, patch)`, `toggleBreak(id, index)`, `move(id, delta)`, `createKeyPair()` (save dialog through `api.createKeyPair`, keeps the returned public key and path), `copyPublicKey()` (clipboard, falls back to the selectable read-only field), `addOwnKey()` (appends the shown public key to the recipient list once), `run()`, `resultText(bar)`. The primary button is also disabled while `creatingKey` is true. `switchMode` and `run` clear `identity` with the passwords; `recipients` and `keyPair` stay.
 
 ### `Preview.tsx`
 
@@ -165,3 +170,5 @@ failed rules, and a mandatory human-review note for PDF/UA-1.
 `human_review_required`, and `issues`. Per-row progress carries the report.
 `archivalConflict` and `attachmentConflict` prevent invalid UI combinations;
 missing validator disables standards export. Rust remains authoritative.
+
+`App` holds `watermarkEnabled` (off initially) and `watermarkText` (“Confidential”). `watermarkConflict` disables submission for invalid labels, non-PDF targets or standards exports. Preview dependencies include both fields. Requests send the text only in Convert when enabled, otherwise null. The bilingual `watermark.*` keys cover labels, help and validation. Recipient text is not stored in localStorage.

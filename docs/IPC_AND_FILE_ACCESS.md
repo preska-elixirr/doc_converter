@@ -1,6 +1,6 @@
 ---
 title: "IPC Commands And File Access"
-description: "The eight Tauri commands, two events, backend-owned input IDs, native dialogs, drag-and-drop, and the capability file."
+description: "The Tauri commands, two events, backend-owned input IDs, native dialogs, drag-and-drop, and the capability file."
 type: "reference"
 tags:
   - ipc
@@ -13,7 +13,7 @@ source_sync: "manual"
 
 # IPC Commands And File Access
 
-The frontend talks to Rust through eight commands and listens to two events. It never receives a filesystem path for reading, and the only paths it sends are the ones the native drag-and-drop event handed it. The backend mints an opaque ID per file and accepts only those IDs.
+The frontend talks to Rust through twelve commands and listens to two events. It never receives a filesystem path for reading, and the only paths it sends are the ones the native drag-and-drop event handed it. The backend mints an opaque ID per file and accepts only those IDs.
 
 Owning files:
 
@@ -61,12 +61,14 @@ type BatchRequest = {
             page_breaks: number[] };   // batch-wide part; per-item breaks win
   password: string;
   protect: boolean;            // convert: protect PDF outputs
-  encryption: 'pdf' | 'file';  // encrypt tab
+  encryption: 'pdf' | 'file' | 'key';  // encrypt tab
+  recipients: string;          // encrypt tab, key: public keys, one per line
+  identity: string;            // decrypt tab: the secret key for .age files made for a public key
   image: { max_edge: number; quality: number };
 };
 ```
 
-Errors reject with a string: `Select at least one file.`, the password messages, `A job is already running`, `Select the file again`, `Unknown output format …`, `Output already exists. Choose a new filename.`
+Errors reject with a string: `Select at least one file.`, the password and key messages listed in [`ENCRYPTION.md`](ENCRYPTION.md#error-messages), `A job is already running`, `Select the file again`, `Unknown output format …`, `Output already exists. Choose a new filename.`
 
 ### `cancel_job()`
 
@@ -83,6 +85,10 @@ The PDF the current settings would produce for the row's target `format` (`pdf` 
 ### `refresh_outputs(ids) -> { id, outputs }[]`
 
 Recomputes the Convert options for queued files with the engines known now. The page calls it when `engines-ready` fires, so files added before detection finished get their Office formats.
+
+### `create_key_pair() -> { public_key, path } | null`
+
+Holds the busy flag for the dialog and the write, like a batch, so nothing else starts meanwhile. Opens a native save dialog that suggests `age-secret-key.txt`, generates an X25519 key pair and writes the standard age key file there without overwriting. Returns the public key and the file's path for display, or `null` when the dialog is cancelled. The secret key never crosses IPC. See [`ENCRYPTION.md`](ENCRYPTION.md#your-key-pair).
 
 ## Events
 

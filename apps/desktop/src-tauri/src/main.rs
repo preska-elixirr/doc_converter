@@ -89,9 +89,17 @@ struct BatchRequest {
     password: String,
     #[serde(default)]
     protect: bool,
-    /// Encrypt tab: `pdf` or `file`.
+    #[serde(default)]
+    watermark: Option<String>,
+    /// Encrypt tab: `pdf`, `file` (password) or `key` (public keys).
     #[serde(default)]
     encryption: String,
+    /// Encrypt tab, `key`: public keys, one per line.
+    #[serde(default)]
+    recipients: String,
+    /// Decrypt tab: the secret key for `.age` files encrypted to a public key.
+    #[serde(default)]
+    identity: String,
     #[serde(default)]
     image: ImageSettings,
     #[serde(default)]
@@ -340,6 +348,7 @@ fn build_tasks(state: &AppState, request: &BatchRequest) -> Result<Vec<Task>, St
                 format: item.format.clone().unwrap_or_else(|| "png".into()),
             },
             "encrypt" if request.encryption == "pdf" => Action::Protect,
+            "encrypt" if request.encryption == "key" => Action::EncryptFor,
             "encrypt" => Action::Encrypt,
             "decrypt" if kind == InputKind::Pdf => Action::Unlock,
             "decrypt" => Action::Decrypt,
@@ -366,14 +375,35 @@ fn check_password(request: &BatchRequest) -> Result<(), String> {
                 .items
                 .iter()
                 .any(|item| item.format.as_deref().unwrap_or("pdf") == "pdf"));
-    let needs_new = request.mode == "encrypt" || protects_pdf;
+    let needs_new = (request.mode == "encrypt" && request.encryption != "key") || protects_pdf;
     if needs_new && chars < 12 {
         return Err("Use a password with at least 12 characters.".into());
     }
-    if request.mode == "decrypt" && chars == 0 {
-        return Err("Enter the password.".into());
+    if request.mode == "decrypt" && chars == 0 && request.identity.trim().is_empty() {
+        return Err("Enter the password or the secret key.".into());
     }
     Ok(())
+}
+
+type Keys = (
+    Vec<converter_core::crypto::Recipient>,
+    Option<converter_core::crypto::Identity>,
+);
+
+/// Public keys for an encrypt-for-recipients batch and the secret key for a
+/// decrypt batch, parsed before any dialog opens so a typo fails fast.
+fn parse_keys(request: &BatchRequest) -> Result<Keys, String> {
+    let recipients = if request.mode == "encrypt" && request.encryption == "key" {
+        converter_core::crypto::parse_recipients(&request.recipients).map_err(|e| e.to_string())?
+    } else {
+        Vec::new()
+    };
+    let identity = if request.mode == "decrypt" && !request.identity.trim().is_empty() {
+        Some(converter_core::crypto::parse_identity(&request.identity).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+    Ok((recipients, identity))
 }
 
 #[tauri::command]
@@ -386,6 +416,7 @@ async fn run_batch(
         return Err("Select at least one file.".into());
     }
     check_password(&request)?;
+    let (recipients, identity) = parse_keys(&request)?;
     if state.busy.swap(true, Ordering::SeqCst) {
         return Err("A job is already running".into());
     }
@@ -409,9 +440,13 @@ async fn run_batch(
             layout: request.layout.clone(),
             password,
             protect: request.protect,
+            watermark: request.watermark.clone(),
             image: request.image.clone(),
             attachments,
+            recipients,
+            identity,
         };
+        job::validate_watermark(&batch).map_err(|e| e.to_string())?;
         let destination = if batch.merge {
             let mut name = request.merge_name.trim().to_string();
             if name.is_empty() {
@@ -612,9 +647,16 @@ async fn preview(
     id: String,
     format: String,
     layout: Layout,
+    watermark: Option<String>,
 ) -> Result<tauri::ipc::Response, String> {
     let (source, kind) = lookup(&state, &id)?;
     let target = parse_format(Some(&format))?;
+    if let Some(text) = &watermark {
+        converter_core::watermark::validate(text).map_err(|e| e.to_string())?;
+        if target != OutputFormat::Pdf {
+            return Err("Watermarks require ordinary PDF output in Convert mode.".into());
+        }
+    }
     if kind == InputKind::Pdf || converter_core::inspect(&source) == InputKind::Pdf {
         return Err(
             "Use the security inspector to review this PDF before opening its preview.".into(),
@@ -637,12 +679,62 @@ async fn preview(
     }
     let engines = engines_or_default(&state);
     let bytes = tauri::async_runtime::spawn_blocking(move || {
-        job::preview_pdf(&source, kind, target, &layout, &engines, &flag)
+        let bytes = job::preview_pdf(&source, kind, target, &layout, &engines, &flag)?;
+        match watermark {
+            Some(text) => converter_core::watermark::apply(&bytes, &text, &flag),
+            None => Ok(bytes),
+        }
     })
     .await
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())?;
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[derive(Serialize)]
+struct KeyPair {
+    public_key: String,
+    /// Where the secret key file was saved, for display only.
+    path: String,
+}
+
+/// Creates an age key pair. The secret key goes straight into a file the
+/// user picks in a save dialog; only the public key and that file's
+/// location return to the page. Holds `busy` like a batch, so no job can
+/// start while the dialog is open.
+#[tauri::command]
+async fn create_key_pair(state: State<'_, AppState>) -> Result<Option<KeyPair>, String> {
+    if state.busy.swap(true, Ordering::SeqCst) {
+        return Err("A job is already running".into());
+    }
+    let result = async {
+        let Some(file) = rfd::AsyncFileDialog::new()
+            .set_title("Save your secret key")
+            .set_file_name("age-secret-key.txt")
+            .save_file()
+            .await
+        else {
+            return Ok(None);
+        };
+        let path = file.path().to_owned();
+        if path.exists() {
+            return Err("Output already exists. Choose a new filename.".into());
+        }
+        let public_key = tauri::async_runtime::spawn_blocking({
+            let path = path.clone();
+            move || converter_core::crypto::write_identity_file(&path, &AtomicBool::new(false))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+        Ok(Some(KeyPair {
+            public_key,
+            path: path.to_string_lossy().into_owned(),
+        }))
+    }
+    .await;
+    state.busy.store(false, Ordering::SeqCst);
+    result
 }
 
 fn main() {
@@ -692,7 +784,8 @@ fn main() {
             inspect_pdf,
             open_inspected_pdf,
             preview,
-            validate_pdf
+            validate_pdf,
+            create_key_pair
         ])
         .run(tauri::generate_context!())
         .expect("Unable to start Doc Converter");
@@ -701,6 +794,13 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn failure(keys: Result<Keys, String>) -> String {
+        match keys {
+            Ok(_) => panic!("expected the keys to be refused"),
+            Err(message) => message,
+        }
+    }
 
     #[test]
     fn archival_requests_are_not_silently_normalized_to_plain_pdf() {
@@ -749,7 +849,10 @@ mod tests {
             layout: Layout::default(),
             password: password.into(),
             protect,
+            watermark: None,
             encryption: "file".into(),
+            recipients: String::new(),
+            identity: String::new(),
             image: ImageSettings::default(),
             attachments: Vec::new(),
         }
@@ -773,5 +876,45 @@ mod tests {
         assert!(check_password(&request("encrypt", &[], false, false, "short")).is_err());
         assert!(check_password(&request("decrypt", &[], false, false, "")).is_err());
         assert!(check_password(&request("decrypt", &[], false, false, "x")).is_ok());
+    }
+
+    #[test]
+    fn public_key_mode_needs_keys_instead_of_a_password() {
+        let dir =
+            std::env::temp_dir().join(format!("doc-converter-key-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("key.txt");
+        let _ = std::fs::remove_file(&file);
+        let public =
+            converter_core::crypto::write_identity_file(&file, &AtomicBool::new(false)).unwrap();
+        let key_file = std::fs::read_to_string(&file).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let mut r = request("encrypt", &[], false, false, "");
+        r.encryption = "key".into();
+        assert!(check_password(&r).is_ok(), "recipients need no password");
+        assert!(failure(parse_keys(&r)).contains("at least one public key"));
+        r.recipients = format!("# colleague\n{public}\n");
+        assert_eq!(parse_keys(&r).unwrap().0.len(), 1);
+        r.recipients = key_file.clone();
+        assert!(failure(parse_keys(&r)).contains("secret key"));
+        r.encryption = "file".into();
+        assert!(check_password(&r).is_err(), "password mode still needs one");
+        assert!(
+            parse_keys(&r).unwrap().0.is_empty(),
+            "keys are ignored outside key mode"
+        );
+
+        let mut d = request("decrypt", &[], false, false, "");
+        assert!(check_password(&d).unwrap_err().contains("secret key"));
+        d.identity = public.clone();
+        assert!(check_password(&d).is_ok());
+        assert!(failure(parse_keys(&d)).contains("public key"));
+        d.identity = key_file;
+        let identity = parse_keys(&d).unwrap().1.unwrap();
+        assert_eq!(identity.to_public().to_string(), public);
+        d.identity = String::new();
+        d.password = "x".into();
+        assert!(parse_keys(&d).unwrap().1.is_none());
     }
 }

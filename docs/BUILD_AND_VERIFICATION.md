@@ -80,7 +80,7 @@ Vite serves on `127.0.0.1:1420` with `strictPort`. Rust changes need a rerun; fr
 cargo test -p converter-core
 ```
 
-Twenty-nine tests in `crates/core/src/` and one in the desktop shell:
+Tests in `crates/core/src/` and in the desktop shell (46 core and 3 desktop tests on 17 September 2026); the main ones:
 
 | Module | Test | Proves |
 | --- | --- | --- |
@@ -91,6 +91,11 @@ Twenty-nine tests in `crates/core/src/` and one in the desktop shell:
 | clean/word | `docx_defaults_failures_and_cancel_leave_no_output` | hidden defaults, unsupported structural revisions, malformed XML, cancellation |
 | job | `cleaning_batch_reports_failures_and_numbers_copies` | mixed privacy batch, per-file failure, PNG pixels, numbered copies, cancellation |
 | crypto | `crypto_roundtrip_wrong_password_and_truncation` | age round trip, wrong password, no overwrite, truncation |
+| crypto | `public_key_roundtrip_needs_the_matching_secret_key` | X25519 recipients from text, either secret key restores, password or unrelated key leaves no output, password file refuses a key, truncation |
+| crypto | `key_text_parsing_rejects_the_wrong_kind_of_key` | line-numbered recipient errors, key limit, whole key file accepted as the secret key, public key refused there |
+| crypto | `identity_file_is_standard_and_never_overwritten` | age-keygen file layout, parses back, second write refused |
+| watermark | `watermarked_text_is_still_extractable` | text survives watermarking for lopdf extraction; reversed MediaBox accepted |
+| job | `public_key_encryption_runs_through_the_batch` | recipient batch without keys fails and never uses the password; with a key succeeds; restore needs the secret key |
 | images | `image_resize_and_cancel_preserve_source` | resize, alpha flattening, source untouched, cancel |
 | images | `webp_and_tiff_roundtrip_and_pdf_output` | WebP lossless and lossy, TIFF, image PDF, no overwrite |
 | pdf | `protect_unlock_and_merge` | AES-256 protect, unlock, merge, locked input refused |
@@ -112,6 +117,7 @@ Twenty-nine tests in `crates/core/src/` and one in the desktop shell:
 | job | `cleanup_skips_folders_that_are_still_in_use` | locked work folders survive cleanup, stale ones go |
 | job | `spreadsheet_html_keeps_images_when_office_is_available` | actual XLSX-to-HTML batch output retains a decodable image after work cleanup |
 | desktop | `password_is_required_only_when_a_pdf_gets_protected` | the password rule per mode and output (`cargo test -p doc-converter`) |
+| desktop | `public_key_mode_needs_keys_instead_of_a_password` | no password in recipient mode, recipient and secret key parsing before any dialog, key file refused as a recipient |
 | office | `file_url_escapes_spaces` | profile URL |
 | office | `converts_text_to_pdf_when_available` | a real LibreOffice conversion and cancel; skips with a message when LibreOffice is absent |
 
@@ -217,3 +223,47 @@ This entry supersedes the earlier PDF/A export limitations above.
   independent human accessibility review, or a packaged installer. PDF/UA means
   machine checks plus a remaining human review; e-invoice business validation is
   not implemented. No claim of universal receiving-system acceptance is made.
+
+## Watermarks — 17 September 2026
+
+- `cargo test --workspace`: 41 core tests and 2 desktop tests passed. The local
+  LibreOffice and veraPDF integration tests ran and passed (not skipped).
+- After the final Unicode-line-separator validation, PDF-version and stream
+  compression refinements, `cargo test -p converter-core watermark --lib`:
+  all 4 watermark tests passed.
+- Coverage: per-page overlays, inherited resources/CropBox/rotation, original
+  content preservation, Croatian text treated as literal data, invalid labels,
+  locked PDFs, undecodable streams, cancellation, unsupported actions/targets,
+  existing PDF copies, two-page conversion, four-page merge, password protection,
+  unchanged sources and refusal to overwrite an existing output.
+- TypeScript `tsc --noEmit` passed. Final Vite production build passed using
+  `.tools/watermark-build-final`; the normal `dist` build initially failed with
+  EPERM while emptying existing `dist/assets`. No existing dist files were
+  force-deleted. The existing large-JavaScript-chunk warning remains.
+- A generated PDF with “Željko Čović” was rendered locally through PDF.js and
+  the installed canvas library. The PNG was visually inspected: diagonal,
+  translucent, centred text with correct accents and readable original content.
+  PDF.js extraction also retained both original and recipient text. Scratch
+  preview artifacts are under ignored `.tools/`; the scratch Rust example was
+  removed. No new runtime dependency was needed.
+- `cargo fmt --all --check` and `git diff --check` passed.
+- Not exercised: native save-dialog clicks, live Tauri UI interaction, packaged
+  installers, exhaustive font coverage, or visual rendering of every possible
+  PDF geometry. Existing PDF preview security restrictions remain unchanged.
+
+## Public-key encryption, 17 September 2026
+
+- Review fixes the same day: watermarks keep the original streams in place
+  so PDF to TXT still works, a pasted key file is found by its prefix, and key
+  creation holds the busy flag. After them:
+- `cargo test -p converter-core`: 46 tests passed in 76 seconds, including the
+  four crypto tests and the batch round trip above. The LibreOffice and veraPDF
+  integration tests ran on this machine.
+- `cargo test -p doc-converter`: 3 tests passed.
+- `cargo fmt --all --check`: clean.
+- `tsc --noEmit` and `vite build`: passed; the existing large-chunk warning
+  remains.
+- Not exercised: the native save dialog of *Create a key pair*, clipboard copy
+  inside the WebView2 window, and opening the outputs with the `age` or `rage`
+  command-line tools, which are not installed here. Interoperability rests on
+  using the same `age` crate and standard recipient types.
